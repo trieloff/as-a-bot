@@ -1,0 +1,31 @@
+{
+  "name": "github-token-broker",
+  "version": "1.0.0",
+  "description": "GitHub App token broker for Cloudflare Workers",
+  "main": "worker.js",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "test": "node --test worker.test.js"
+  },
+  "keywords": [
+    "github",
+    "cloudflare-workers",
+    "token-broker"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "miniflare": "^3.20250718.1",
+    "wrangler": "^3.114.14"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/trieloff/as-a-bot.git"
+  },
+  "bugs": {
+    "url": "https://github.com/trieloff/as-a-bot/issues"
+  },
+  "homepage": "https://github.com/trieloff/as-a-bot#readme"
+}
