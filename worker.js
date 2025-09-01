@@ -146,51 +146,6 @@ async function verifyHMAC(request, body, secret) {
   return providedAuth === expectedAuth;
 }
 
-// Rate limiting with KV
-async function checkRateLimit(env, clientIp, limit = 100, window = 3600) {
-  const key = `rate:${clientIp}`;
-  const now = Date.now();
-  
-  // Get current count from KV
-  const data = await env.RATE_LIMIT.get(key, 'json');
-  
-  if (!data) {
-    // First request
-    await env.RATE_LIMIT.put(key, JSON.stringify({
-      count: 1,
-      resetAt: now + window * 1000
-    }), {
-      expirationTtl: window
-    });
-    return true;
-  }
-  
-  if (now > data.resetAt) {
-    // Window expired, reset
-    await env.RATE_LIMIT.put(key, JSON.stringify({
-      count: 1,
-      resetAt: now + window * 1000
-    }), {
-      expirationTtl: window
-    });
-    return true;
-  }
-  
-  if (data.count >= limit) {
-    return false;
-  }
-  
-  // Increment counter
-  await env.RATE_LIMIT.put(key, JSON.stringify({
-    count: data.count + 1,
-    resetAt: data.resetAt
-  }), {
-    expirationTtl: Math.floor((data.resetAt - now) / 1000)
-  });
-  
-  return true;
-}
-
 // Make GitHub API request
 async function githubRequest(url, options = {}) {
   const response = await fetch(url, {
@@ -355,14 +310,18 @@ async function handleUserTokenStart(request, env, body) {
       throw new Error(data.error_description || data.error || 'Failed to start device flow');
     }
     
-    // Store device code data in KV for polling
-    await env.DEVICE_CODES.put(data.device_code, JSON.stringify({
-      ...data,
-      created_at: Date.now(),
-      redirect_uri
-    }), {
-      expirationTtl: data.expires_in
-    });
+    // Store device code data in KV for polling (if KV is available)
+    if (env.DEVICE_CODES) {
+      await env.DEVICE_CODES.put(data.device_code, JSON.stringify({
+        ...data,
+        created_at: Date.now(),
+        redirect_uri
+      }), {
+        expirationTtl: data.expires_in
+      });
+    } else {
+      console.warn('DEVICE_CODES KV namespace not configured - device flow will not persist');
+    }
     
     return new Response(JSON.stringify({
       device_code: data.device_code,
@@ -397,7 +356,17 @@ async function handleUserTokenPoll(request, env, body) {
     });
   }
   
-  // Get device code data from KV
+  // Get device code data from KV (if available)
+  if (!env.DEVICE_CODES) {
+    return new Response(JSON.stringify({
+      error: 'server_error',
+      error_description: 'Device flow not configured on this server'
+    }), {
+      status: 503,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
+  
   const deviceData = await env.DEVICE_CODES.get(device_code, 'json');
   
   if (!deviceData) {
@@ -467,8 +436,10 @@ async function handleUserTokenPoll(request, env, body) {
       });
     }
     
-    // Success - clean up device code
-    await env.DEVICE_CODES.delete(device_code);
+    // Success - clean up device code (if KV is available)
+    if (env.DEVICE_CODES) {
+      await env.DEVICE_CODES.delete(device_code);
+    }
     
     // Calculate expiration
     const expiresAt = new Date(Date.now() + (data.expires_in || 28800) * 1000).toISOString();
@@ -500,7 +471,6 @@ async function handleUserTokenPoll(request, env, body) {
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
-    const clientIp = request.headers.get('CF-Connecting-IP') || 'unknown';
     
     // CORS handling
     const origin = request.headers.get('Origin');
@@ -529,7 +499,28 @@ export default {
       });
     }
     
-    // Only allow POST
+    // Allow GET for health check
+    if (request.method === 'GET' && (url.pathname === '/' || url.pathname === '/health')) {
+      return new Response(JSON.stringify({
+        status: 'healthy',
+        service: 'GitHub App Token Broker',
+        timestamp: new Date().toISOString(),
+        endpoints: {
+          '/health': 'Health check (GET)',
+          '/token': 'Get installation token (POST)',
+          '/user-token/start': 'Start device flow (POST)',
+          '/user-token/poll': 'Poll device flow (POST)'
+        }
+      }), {
+        status: 200,
+        headers: {
+          ...securityHeaders,
+          'Content-Type': 'application/json'
+        }
+      });
+    }
+    
+    // Only allow POST for other endpoints
     if (request.method !== 'POST') {
       return new Response(JSON.stringify({
         error: 'Method not allowed'
@@ -574,21 +565,6 @@ export default {
         headers: {
           ...securityHeaders,
           'Content-Type': 'application/json'
-        }
-      });
-    }
-    
-    // Rate limiting
-    const rateLimitOk = await checkRateLimit(env, clientIp);
-    if (!rateLimitOk) {
-      return new Response(JSON.stringify({
-        error: 'Rate limit exceeded'
-      }), {
-        status: 429,
-        headers: {
-          ...securityHeaders,
-          'Content-Type': 'application/json',
-          'Retry-After': '3600'
         }
       });
     }

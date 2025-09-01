@@ -1,18 +1,15 @@
-name = "github-token-broker"
+name = "as-bot-worker"
 main = "worker.js"
 compatibility_date = "2024-01-01"
+account_id = "155ec15a52a18a14801e04b019da5e5a"
 
 [env.production]
-name = "github-token-broker"
+name = "as-bot-worker"
 
-# KV Namespaces for rate limiting and device codes
-[[kv_namespaces]]
-binding = "RATE_LIMIT"
-id = "YOUR_RATE_LIMIT_KV_ID"
-
-[[kv_namespaces]]
-binding = "DEVICE_CODES"
-id = "YOUR_DEVICE_CODES_KV_ID"
+# KV Namespace for device codes (will be created during deployment)
+# [[kv_namespaces]]
+# binding = "DEVICE_CODES"
+# id = "YOUR_DEVICE_CODES_KV_ID"
 
 # Environment variables (non-sensitive)
 [vars]
