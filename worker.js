@@ -6,7 +6,9 @@
  * 
  * Setup:
  * 1. wrangler secret put GITHUB_CLIENT_ID  # From GitHub App settings
- * 2. wrangler deploy
+ * 2. wrangler secret put GITHUB_APP_ID      # From GitHub App settings  
+ * 3. wrangler secret put GITHUB_APP_PRIVATE_KEY  # From GitHub App settings
+ * 4. wrangler deploy
  * 
  * Usage with ai-aligned-gh:
  * The CLI tool will automatically handle the device flow to get user tokens.
@@ -18,6 +20,8 @@
  *    # Poll for token
  *    curl -X POST https://your-worker.workers.dev/user-token/poll -d '{"device_code":"..."}'
  */
+
+import { signJWT } from './jwt-simple.js';
 
 
 
@@ -98,6 +102,86 @@ async function handleUserTokenStart(request, env, body) {
       headers: { 'Content-Type': 'application/json' }
     });
   }
+}
+
+// Exchange OAuth token for installation access token
+async function exchangeForInstallationToken(oauthToken, env) {
+  try {
+    // First, get user installations using the OAuth token
+    const installationsResponse = await fetch('https://api.github.com/user/installations', {
+      headers: {
+        'Authorization': `Bearer ${oauthToken}`,
+        'Accept': 'application/vnd.github.v3+json'
+      }
+    });
+    
+    if (!installationsResponse.ok) {
+      throw new Error('Failed to get user installations');
+    }
+    
+    const installationsData = await installationsResponse.json();
+    
+    // Find the as-a-bot installation
+    const installation = installationsData.installations?.find(
+      inst => inst.app_slug === 'as-a-bot'
+    );
+    
+    if (!installation) {
+      // User hasn't installed the app, return the OAuth token as-is
+      return oauthToken;
+    }
+    
+    // Create an installation access token for the user
+    // This requires the app's private key and app ID
+    if (!env.GITHUB_APP_ID || !env.GITHUB_APP_PRIVATE_KEY) {
+      // If app credentials aren't configured, return OAuth token
+      console.log('App credentials not configured, returning OAuth token');
+      return oauthToken;
+    }
+    
+    // Create JWT for app authentication
+    const jwt = await createAppJWT(env.GITHUB_APP_ID, env.GITHUB_APP_PRIVATE_KEY);
+    
+    // Create installation access token
+    const tokenResponse = await fetch(
+      `https://api.github.com/app/installations/${installation.id}/access_tokens`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${jwt}`,
+          'Accept': 'application/vnd.github.v3+json'
+        },
+        body: JSON.stringify({
+          permissions: installation.permissions
+        })
+      }
+    );
+    
+    if (!tokenResponse.ok) {
+      console.error('Failed to create installation token:', await tokenResponse.text());
+      return oauthToken;
+    }
+    
+    const tokenData = await tokenResponse.json();
+    return tokenData.token;
+  } catch (error) {
+    console.error('Error exchanging token:', error);
+    // On any error, return the original OAuth token
+    return oauthToken;
+  }
+}
+
+// Create JWT for GitHub App authentication
+async function createAppJWT(appId, privateKey) {
+  const now = Math.floor(Date.now() / 1000);
+  
+  const payload = {
+    iat: now - 60,  // Issued 60 seconds ago to account for clock drift
+    exp: now + 600, // Expires in 10 minutes
+    iss: appId      // Issuer is the app ID
+  };
+  
+  return await signJWT(payload, privateKey);
 }
 
 // Handle /user-token/poll endpoint
@@ -193,7 +277,11 @@ async function handleUserTokenPoll(request, env, body) {
       });
     }
     
-    // Success - clean up device code (if KV is available)
+    // Success - we have an OAuth token
+    // Now exchange it for an installation token to get app attribution
+    const finalToken = await exchangeForInstallationToken(data.access_token, env);
+    
+    // Clean up device code (if KV is available)
     if (env.DEVICE_CODES) {
       await env.DEVICE_CODES.delete(device_code);
     }
@@ -202,10 +290,11 @@ async function handleUserTokenPoll(request, env, body) {
     const expiresAt = new Date(Date.now() + (data.expires_in || 28800) * 1000).toISOString();
     
     return new Response(JSON.stringify({
-      access_token: data.access_token,
-      token_type: data.token_type,
+      access_token: finalToken,
+      token_type: data.token_type || 'bearer',
       expires_at: expiresAt,
-      scope: data.scope
+      scope: data.scope,
+      app_attribution: finalToken !== data.access_token // Indicate if we got an installation token
     }), {
       status: 200,
       headers: {
