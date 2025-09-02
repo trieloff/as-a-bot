@@ -11,6 +11,11 @@ name = "as-bot-worker"
 binding = "DEVICE_CODES"
 id = "4d16c1ca5973424990ae00ab7f5c6bf7"
 
+# KV Namespace for auth states (web flow)
+# [[kv_namespaces]]
+# binding = "AUTH_STATES"
+# id = "NEEDS_TO_BE_CREATED"
+
 # Environment variables (non-sensitive)
 [vars]
 GITHUB_API = "https://api.github.com"

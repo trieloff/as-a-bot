@@ -324,11 +324,18 @@ async function handleUserTokenPoll(request, env, body) {
   }
 }
 
+// Import web flow handlers
+import webFlow from './worker-web.js';
+
 // Main request handler
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     
+    // Route web flow endpoints to web flow handler
+    if (url.pathname.startsWith('/auth/')) {
+      return webFlow.fetch(request, env, ctx);
+    }
     
     // Allow GET for health check
     if (request.method === 'GET' && (url.pathname === '/' || url.pathname === '/health')) {
@@ -338,7 +345,10 @@ export default {
         timestamp: new Date().toISOString(),
         endpoints: {
           '/user-token/start': 'Start device flow (POST)',
-          '/user-token/poll': 'Poll device flow (POST)'
+          '/user-token/poll': 'Poll device flow (POST)',
+          '/auth/start': 'Start web flow (POST)',
+          '/auth/callback': 'OAuth callback (GET)',
+          '/auth/poll': 'Poll web flow (POST)'
         }
       }), {
         status: 200,
