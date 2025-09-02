@@ -2,13 +2,16 @@
 
 A secure token broker service that manages GitHub App tokens, providing both installation tokens and user-to-server tokens via OAuth device flow.
 
+🌐 **Live at**: https://as-bot-worker.minivelos.workers.dev
+
 ## Features
 
 - **Installation Tokens**: Mint GitHub App installation tokens for automated workflows
-- **User-to-Server Tokens**: Support explicit user attribution via OAuth device flow
-- **Security**: HMAC authentication, rate limiting, CORS protection
+- **User-to-Server Tokens**: Support explicit user attribution via OAuth device flow (optional, requires KV)
+- **Security**: HMAC authentication, CORS protection
 - **Performance**: Runs on Cloudflare Workers edge network
 - **Minimal Dependencies**: Uses Web Crypto API for JWT signing
+- **Health Check**: Built-in health endpoint for monitoring
 
 ## Setup
 
@@ -19,14 +22,18 @@ A secure token broker service that manages GitHub App tokens, providing both ins
 3. Generate and download a private key
 4. Note the App ID and Client ID
 
-### 2. Create Cloudflare KV Namespaces
+### 2. Deploy to Cloudflare Workers
 
 ```bash
-wrangler kv:namespace create "RATE_LIMIT"
-wrangler kv:namespace create "DEVICE_CODES"
+npm install
+wrangler deploy
 ```
 
-Update `wrangler.toml` with the generated namespace IDs.
+Note: Device flow requires KV namespace. To enable it:
+```bash
+wrangler kv:namespace create "DEVICE_CODES"
+# Update wrangler.toml with the namespace ID
+```
 
 ### 3. Configure Secrets
 
@@ -43,26 +50,25 @@ wrangler secret put BROKER_CLIENT_SECRET    # Your shared secret
 # Add CLOUDFLARE_TOKEN to your GitHub repository secrets
 ```
 
-### 4. Deploy
+## API Usage
+
+### Health Check
 
 ```bash
-npm install
-wrangler deploy
+curl https://as-bot-worker.minivelos.workers.dev/health
 ```
-
-## API Usage
 
 ### Get Installation Token
 
 ```bash
 # By installation ID
-curl -X POST https://your-worker.workers.dev/token \
+curl -X POST https://as-bot-worker.minivelos.workers.dev/token \
   -H "Content-Type: application/json" \
   -H "X-Client-Auth: $(echo -n 'POST/token{"installation_id":123}' | openssl dgst -sha256 -hmac $SECRET -binary | base64)" \
   -d '{"installation_id": 123}'
 
 # By repository
-curl -X POST https://your-worker.workers.dev/token \
+curl -X POST https://as-bot-worker.minivelos.workers.dev/token \
   -H "Content-Type: application/json" \
   -H "X-Client-Auth: $(echo -n 'POST/token{"owner":"org","repo":"repo"}' | openssl dgst -sha256 -hmac $SECRET -binary | base64)" \
   -d '{"owner": "org", "repo": "repo"}'
@@ -70,15 +76,17 @@ curl -X POST https://your-worker.workers.dev/token \
 
 ### User-to-Server Token (Device Flow)
 
+Note: Requires KV namespace configuration.
+
 ```bash
 # Start device flow
-curl -X POST https://your-worker.workers.dev/user-token/start \
+curl -X POST https://as-bot-worker.minivelos.workers.dev/user-token/start \
   -H "Content-Type: application/json" \
   -H "X-Client-Auth: $(echo -n 'POST/user-token/start{"scopes":"repo user"}' | openssl dgst -sha256 -hmac $SECRET -binary | base64)" \
   -d '{"scopes": "repo user"}'
 
 # Poll for token
-curl -X POST https://your-worker.workers.dev/user-token/poll \
+curl -X POST https://as-bot-worker.minivelos.workers.dev/user-token/poll \
   -H "Content-Type: application/json" \
   -H "X-Client-Auth: $(echo -n 'POST/user-token/poll{"device_code":"..."}' | openssl dgst -sha256 -hmac $SECRET -binary | base64)" \
   -d '{"device_code": "..."}'
@@ -88,10 +96,10 @@ curl -X POST https://your-worker.workers.dev/user-token/poll \
 
 ```bash
 # Export token for GitHub CLI
-export GH_TOKEN=$(curl -sS -X POST https://your-worker.workers.dev/token \
+export GH_TOKEN=$(curl -sS -X POST https://as-bot-worker.minivelos.workers.dev/token \
   -H "Content-Type: application/json" \
-  -H "X-Client-Auth: $(echo -n 'POST/token{"installation_id":123}' | openssl dgst -sha256 -hmac $SECRET -binary | base64)" \
-  -d '{"installation_id": 123}' | jq -r .token)
+  -H "X-Client-Auth: $(echo -n 'POST/token{"owner":"org","repo":"repo"}' | openssl dgst -sha256 -hmac $SECRET -binary | base64)" \
+  -d '{"owner": "org", "repo": "repo"}' | jq -r .token)
 
 # Use with GitHub CLI
 gh api user --jq .login
@@ -106,11 +114,25 @@ All requests require HMAC-SHA256 authentication via `X-Client-Auth` header:
 3. Base64 encode the signature
 4. Send as `X-Client-Auth` header
 
-## Rate Limiting
+## Utility Scripts
 
-- 100 requests per hour per IP address
-- Returns 429 status when exceeded
-- Uses Cloudflare Workers KV for distributed tracking
+### Installation Checker
+
+Check if the GitHub App is installed on a repository:
+
+```bash
+# Check installation status
+./check-app owner/repo
+
+# Examples
+./check-app trieloff/as-a-bot  # Check this repo
+./check-app facebook/react      # Check any repo
+```
+
+The script will:
+- Verify if the app is installed
+- Show installation URL if not installed
+- Offer to open browser for installation (interactive mode)
 
 ## Security Features
 
@@ -119,7 +141,6 @@ All requests require HMAC-SHA256 authentication via `X-Client-Auth` header:
 - Automatic expiration headers
 - CORS protection (configurable origins)
 - Content Security Policy headers
-- Rate limiting per IP
 
 ## Testing
 
@@ -140,9 +161,10 @@ npm test
 
 ## Endpoints
 
+- `GET /health` - Health check and service info
 - `POST /token` - Get installation access token
-- `POST /user-token/start` - Start OAuth device flow
-- `POST /user-token/poll` - Poll for user token
+- `POST /user-token/start` - Start OAuth device flow (requires KV)
+- `POST /user-token/poll` - Poll for user token (requires KV)
 
 ## Response Format
 
