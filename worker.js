@@ -53,10 +53,8 @@ async function handleUserTokenStart(request, env, body) {
   
   // IMPORTANT: For GitHub Apps, we should NOT send scopes
   // GitHub Apps use fine-grained permissions, not OAuth scopes
-  // Sending scopes makes it behave like an OAuth App
-  if (scopes && false) { // Disabled - never send scopes for GitHub App
-    params.append('scope', scopes);
-  }
+  // The device flow will create a user-to-server token with the app's permissions
+  // Do NOT send scopes parameter - it would break the GitHub App authentication
   
   try {
     const response = await fetch(url, {
@@ -107,80 +105,10 @@ async function handleUserTokenStart(request, env, body) {
   }
 }
 
-// Exchange OAuth token for installation access token
-async function exchangeForInstallationToken(oauthToken, env) {
-  try {
-    // First, get user installations using the OAuth token
-    const installationsResponse = await fetch('https://api.github.com/user/installations', {
-      headers: {
-        'Authorization': `Bearer ${oauthToken}`,
-        'Accept': 'application/vnd.github.v3+json'
-      }
-    });
-    
-    if (!installationsResponse.ok) {
-      throw new Error('Failed to get user installations');
-    }
-    
-    const installationsData = await installationsResponse.json();
-    
-    // Find the as-a-bot installation
-    const installation = installationsData.installations?.find(
-      inst => inst.app_slug === 'as-a-bot'
-    );
-    
-    if (!installation) {
-      // User hasn't installed the app, return the OAuth token as-is
-      return oauthToken;
-    }
-    
-    // Create an installation access token for the user
-    // This requires the app's private key and app ID
-    if (!env.GITHUB_APP_ID || !env.GITHUB_APP_PRIVATE_KEY) {
-      // If app credentials aren't configured, return OAuth token
-      console.log('App credentials not configured, returning OAuth token');
-      return oauthToken;
-    }
-    
-    // Create JWT for app authentication
-    const jwt = await createAppJWT(env.GITHUB_APP_ID, env.GITHUB_APP_PRIVATE_KEY);
-    
-    // Create installation access token
-    // We'll request the same permissions the user authorized
-    const tokenResponse = await fetch(
-      `https://api.github.com/app/installations/${installation.id}/access_tokens`,
-      {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${jwt}`,
-          'Accept': 'application/vnd.github.v3+json'
-        },
-        body: JSON.stringify({
-          // Request repo scope to match what the OAuth token has
-          repositories: 'all',
-          permissions: {
-            contents: 'write',
-            issues: 'write',
-            pull_requests: 'write',
-            metadata: 'read'
-          }
-        })
-      }
-    );
-    
-    if (!tokenResponse.ok) {
-      console.error('Failed to create installation token:', await tokenResponse.text());
-      return oauthToken;
-    }
-    
-    const tokenData = await tokenResponse.json();
-    return tokenData.token;
-  } catch (error) {
-    console.error('Error exchanging token:', error);
-    // On any error, return the original OAuth token
-    return oauthToken;
-  }
-}
+// Note: We do NOT exchange user tokens for installation tokens
+// User-to-server tokens (ghu_ prefix) maintain user identity with app badge
+// Installation tokens (ghs_ prefix) would show actions as from the bot only
+// This is intentionally removed to ensure proper user attribution
 
 // Create JWT for GitHub App authentication
 async function createAppJWT(appId, privateKey) {
@@ -288,9 +216,11 @@ async function handleUserTokenPoll(request, env, body) {
       });
     }
     
-    // Success - we have a token
-    // Don't exchange it - GitHub App device flow should already give us a user-to-server token
-    const finalToken = data.access_token; // await exchangeForInstallationToken(data.access_token, env);
+    // Success - we have a user-to-server token
+    // IMPORTANT: Do NOT exchange this for an installation token!
+    // User-to-server tokens (ghu_ prefix) maintain user identity with app badge
+    // Installation tokens (ghs_ prefix) would lose user attribution
+    const finalToken = data.access_token;
     
     // Clean up device code (if KV is available)
     if (env.DEVICE_CODES) {
