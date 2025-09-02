@@ -16,12 +16,26 @@
  * Usage Examples:
  * 
  * Get installation token:
+ *    # Preferred: Using GitHub user token
+ *    curl -X POST https://your-worker.workers.dev/token \
+ *      -H "Content-Type: application/json" \
+ *      -H "Authorization: Bearer $GITHUB_TOKEN" \
+ *      -d '{"owner": "org", "repo": "repo"}'
+ * 
+ *    # Deprecated: Using HMAC (will be removed)
  *    curl -X POST https://your-worker.workers.dev/token \
  *      -H "Content-Type: application/json" \
  *      -H "X-Client-Auth: $(echo -n 'POST/token{"installation_id":123}' | openssl dgst -sha256 -hmac $SECRET -binary | base64)" \
  *      -d '{"installation_id": 123}'
  * 
  * Get token by repo:
+ *    # Preferred: Using GitHub user token
+ *    curl -X POST https://your-worker.workers.dev/token \
+ *      -H "Content-Type: application/json" \
+ *      -H "Authorization: Bearer $GITHUB_TOKEN" \
+ *      -d '{"owner": "org", "repo": "repo"}'
+ * 
+ *    # Deprecated: Using HMAC
  *    curl -X POST https://your-worker.workers.dev/token \
  *      -H "Content-Type: application/json" \
  *      -H "X-Client-Auth: $(echo -n 'POST/token{"owner":"org","repo":"repo"}' | openssl dgst -sha256 -hmac $SECRET -binary | base64)" \
@@ -40,10 +54,11 @@
  *      -d '{"device_code": "..."}'
  * 
  * Shell one-liner for token export:
+ *    # Using GitHub user token (secure)
  *    export GH_TOKEN=$(curl -sS -X POST https://your-worker.workers.dev/token \
  *      -H "Content-Type: application/json" \
- *      -H "X-Client-Auth: $(echo -n 'POST/token{"installation_id":123}' | openssl dgst -sha256 -hmac $SECRET -binary | base64)" \
- *      -d '{"installation_id": 123}' | jq -r .token)
+ *      -H "Authorization: Bearer $GITHUB_TOKEN" \
+ *      -d '{"owner": "org", "repo": "repo"}' | jq -r .token)
  */
 
 // Utilities for base64url encoding
@@ -116,7 +131,7 @@ async function createAppJWT(privateKeyPEM, appId) {
   return `${message}.${signatureEncoded}`;
 }
 
-// Verify HMAC authentication
+// Verify HMAC authentication (deprecated - for backward compatibility)
 async function verifyHMAC(request, body, secret) {
   const method = request.method;
   const url = new URL(request.url);
@@ -144,6 +159,162 @@ async function verifyHMAC(request, body, secret) {
   
   const expectedAuth = btoa(String.fromCharCode(...new Uint8Array(signature)));
   return providedAuth === expectedAuth;
+}
+
+// Verify GitHub user token and get user info
+async function verifyGitHubToken(token, env) {
+  const githubApi = env.GITHUB_API || 'https://api.github.com';
+  const url = `${githubApi}/user`;
+  
+  try {
+    const response = await fetch(url, {
+      headers: {
+        'Accept': 'application/vnd.github.v3+json',
+        'Authorization': `Bearer ${token}`,
+        'User-Agent': 'GitHub-App-Token-Broker'
+      }
+    });
+    
+    if (!response.ok) {
+      return null;
+    }
+    
+    const user = await response.json();
+    return user;
+  } catch (error) {
+    console.error('Failed to verify GitHub token:', error);
+    return null;
+  }
+}
+
+// Check if user has access to repository
+async function checkRepositoryAccess(token, owner, repo, env) {
+  const githubApi = env.GITHUB_API || 'https://api.github.com';
+  const url = `${githubApi}/repos/${owner}/${repo}`;
+  
+  try {
+    const response = await fetch(url, {
+      headers: {
+        'Accept': 'application/vnd.github.v3+json',
+        'Authorization': `Bearer ${token}`,
+        'User-Agent': 'GitHub-App-Token-Broker'
+      }
+    });
+    
+    if (!response.ok) {
+      return null;
+    }
+    
+    const repoData = await response.json();
+    
+    // Also get user's permissions for this repo
+    const permissionsUrl = `${githubApi}/repos/${owner}/${repo}/collaborators/permissions`;
+    const userUrl = `${githubApi}/user`;
+    
+    const userResponse = await fetch(userUrl, {
+      headers: {
+        'Accept': 'application/vnd.github.v3+json',
+        'Authorization': `Bearer ${token}`,
+        'User-Agent': 'GitHub-App-Token-Broker'
+      }
+    });
+    
+    if (!userResponse.ok) {
+      return null;
+    }
+    
+    const userData = await userResponse.json();
+    const username = userData.login;
+    
+    // Check user's permission level
+    const permUrl = `${githubApi}/repos/${owner}/${repo}/collaborators/${username}/permission`;
+    const permResponse = await fetch(permUrl, {
+      headers: {
+        'Accept': 'application/vnd.github.v3+json',
+        'Authorization': `Bearer ${token}`,
+        'User-Agent': 'GitHub-App-Token-Broker'
+      }
+    });
+    
+    if (permResponse.ok) {
+      const permData = await permResponse.json();
+      return {
+        repo: repoData,
+        permissions: permData.permission,
+        user: permData.user
+      };
+    }
+    
+    // For public repos, users might have read access without being a collaborator
+    if (!repoData.private) {
+      return {
+        repo: repoData,
+        permissions: 'read',
+        user: userData
+      };
+    }
+    
+    return null;
+  } catch (error) {
+    console.error('Failed to check repository access:', error);
+    return null;
+  }
+}
+
+// Get app installation permissions
+async function getAppInstallationPermissions(jwt, installationId, env) {
+  const githubApi = env.GITHUB_API || 'https://api.github.com';
+  const url = `${githubApi}/app/installations/${installationId}`;
+  
+  try {
+    const response = await fetch(url, {
+      headers: {
+        'Accept': 'application/vnd.github.v3+json',
+        'Authorization': `Bearer ${jwt}`,
+        'User-Agent': 'GitHub-App-Token-Broker'
+      }
+    });
+    
+    if (!response.ok) {
+      return null;
+    }
+    
+    const installation = await response.json();
+    return installation.permissions;
+  } catch (error) {
+    console.error('Failed to get app permissions:', error);
+    return null;
+  }
+}
+
+// Check if user permissions meet or exceed app permissions
+function validatePermissions(userPermission, appPermissions) {
+  // Permission hierarchy: admin > write > read
+  const permissionLevels = {
+    'admin': 3,
+    'write': 2,
+    'read': 1,
+    'none': 0
+  };
+  
+  const userLevel = permissionLevels[userPermission] || 0;
+  
+  // Check each app permission
+  for (const [resource, permission] of Object.entries(appPermissions || {})) {
+    const requiredLevel = permissionLevels[permission] || 0;
+    
+    // For repository-level permissions, check if user has sufficient access
+    if (resource === 'contents' || resource === 'pull_requests' || resource === 'issues') {
+      if (userLevel < requiredLevel) {
+        return {
+          valid: false,
+          error: `Insufficient permissions: app requires '${permission}' access to '${resource}', but user only has '${userPermission}' access to repository`
+        };
+      }
+    }
+  }
+  
+  return { valid: true };
 }
 
 // Make GitHub API request
@@ -191,7 +362,7 @@ async function getInstallationId(env, owner, repo, jwt) {
 }
 
 // Handle /token endpoint
-async function handleToken(request, env, body) {
+async function handleToken(request, env, body, authenticatedUser = null) {
   const { installation_id, owner, repo } = body;
   
   if (!installation_id && (!owner || !repo)) {
@@ -233,6 +404,43 @@ async function handleToken(request, env, body) {
         headers: { 'Content-Type': 'application/json' }
       });
     }
+  }
+  
+  // If authenticated with GitHub user token, verify permissions
+  if (authenticatedUser) {
+    // Get app installation permissions
+    const appPermissions = await getAppInstallationPermissions(jwt, installationId, env);
+    if (!appPermissions) {
+      return new Response(JSON.stringify({
+        error: 'Failed to retrieve app installation permissions'
+      }), {
+        status: 500,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+    
+    // Validate user has sufficient permissions
+    const validation = validatePermissions(authenticatedUser.repoAccess.permissions, appPermissions);
+    if (!validation.valid) {
+      return new Response(JSON.stringify({
+        error: 'Permission denied',
+        details: validation.error,
+        user: authenticatedUser.user.login,
+        userPermission: authenticatedUser.repoAccess.permissions,
+        requiredPermissions: appPermissions
+      }), {
+        status: 403,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+    
+    console.log({
+      action: 'token_requested',
+      user: authenticatedUser.user.login,
+      repo: `${owner || authenticatedUser.repoAccess.repo.owner.login}/${repo || authenticatedUser.repoAccess.repo.name}`,
+      userPermission: authenticatedUser.repoAccess.permissions,
+      timestamp: new Date().toISOString()
+    });
   }
   
   // Get installation token
@@ -535,27 +743,112 @@ export default {
     
     // Parse request body
     let body;
+    let authenticatedUser = null;
+    
     try {
       const rawBody = await request.text();
       body = rawBody ? JSON.parse(rawBody) : {};
       
-      // Verify HMAC
-      const secret = env.BROKER_CLIENT_SECRET;
-      if (!secret) {
-        throw new Error('BROKER_CLIENT_SECRET not configured');
-      }
-      
-      const isValid = await verifyHMAC(request, rawBody, secret);
-      if (!isValid) {
-        return new Response(JSON.stringify({
-          error: 'Invalid authentication'
-        }), {
-          status: 401,
-          headers: {
-            ...securityHeaders,
-            'Content-Type': 'application/json'
+      // Check for GitHub token in Authorization header
+      const authHeader = request.headers.get('Authorization');
+      if (authHeader && authHeader.startsWith('Bearer ')) {
+        const githubToken = authHeader.substring(7);
+        
+        // Verify GitHub token
+        const user = await verifyGitHubToken(githubToken, env);
+        if (!user) {
+          return new Response(JSON.stringify({
+            error: 'Invalid GitHub token'
+          }), {
+            status: 401,
+            headers: {
+              ...securityHeaders,
+              'Content-Type': 'application/json'
+            }
+          });
+        }
+        
+        // For /token endpoint, check repository access
+        if (url.pathname === '/token') {
+          // Determine repository from request
+          let targetOwner = body.owner;
+          let targetRepo = body.repo;
+          
+          // If using installation_id, we need to get the repo info first
+          if (!targetOwner || !targetRepo) {
+            if (body.installation_id) {
+              // For now, require owner/repo when using user authentication
+              return new Response(JSON.stringify({
+                error: 'When using GitHub user authentication, owner and repo must be specified'
+              }), {
+                status: 400,
+                headers: {
+                  ...securityHeaders,
+                  'Content-Type': 'application/json'
+                }
+              });
+            }
           }
-        });
+          
+          // Check user has access to the repository
+          const repoAccess = await checkRepositoryAccess(githubToken, targetOwner, targetRepo, env);
+          if (!repoAccess) {
+            return new Response(JSON.stringify({
+              error: 'Access denied',
+              details: `User does not have access to repository ${targetOwner}/${targetRepo}`
+            }), {
+              status: 403,
+              headers: {
+                ...securityHeaders,
+                'Content-Type': 'application/json'
+              }
+            });
+          }
+          
+          authenticatedUser = {
+            user,
+            repoAccess,
+            token: githubToken
+          };
+        } else {
+          // For non-token endpoints, just store user info
+          authenticatedUser = {
+            user,
+            token: githubToken
+          };
+        }
+      } else {
+        // Fall back to HMAC authentication (deprecated)
+        const secret = env.BROKER_CLIENT_SECRET;
+        if (!secret) {
+          return new Response(JSON.stringify({
+            error: 'Authentication required. Use GitHub token in Authorization header.'
+          }), {
+            status: 401,
+            headers: {
+              ...securityHeaders,
+              'Content-Type': 'application/json',
+              'WWW-Authenticate': 'Bearer realm="GitHub App Token Broker"'
+            }
+          });
+        }
+        
+        const isValid = await verifyHMAC(request, rawBody, secret);
+        if (!isValid) {
+          return new Response(JSON.stringify({
+            error: 'Invalid authentication. Use GitHub token in Authorization header.'
+          }), {
+            status: 401,
+            headers: {
+              ...securityHeaders,
+              'Content-Type': 'application/json',
+              'WWW-Authenticate': 'Bearer realm="GitHub App Token Broker"'
+            }
+          });
+        }
+        
+        // Log warning about deprecated auth method
+        console.warn('HMAC authentication is deprecated. Please use GitHub token authentication.');
       }
     } catch (error) {
       return new Response(JSON.stringify({
@@ -575,7 +868,7 @@ export default {
       
       switch (url.pathname) {
         case '/token':
-          response = await handleToken(request, env, body);
+          response = await handleToken(request, env, body, authenticatedUser);
           break;
         
         case '/user-token/start':
