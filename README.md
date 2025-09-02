@@ -20,7 +20,7 @@ A secure token broker service that manages GitHub App tokens, providing both ins
 
 To use the As-A-Bot GitHub App in your repositories:
 
-1. **Install the GitHub App**: Visit https://github.com/apps/as-a-bot-app
+1. **Install the GitHub App**: Visit https://github.com/apps/as-a-bot
 2. **Select repositories**: Choose which repositories the app should have access to
 3. **Configure permissions**: Grant the necessary permissions for your use case
 4. **Start using the API**: Once installed, you can request tokens for your repositories using the API endpoints

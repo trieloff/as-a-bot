@@ -7,7 +7,7 @@
 set -e
 
 # Configuration
-APP_NAME="as-a-bot-app"
+APP_NAME="as-a-bot"
 APP_URL="https://github.com/apps/${APP_NAME}"
 BROKER_URL="https://as-bot-worker.minivelos.workers.dev"
 
