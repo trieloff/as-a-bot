@@ -40,8 +40,8 @@ async function handleUserTokenStart(request, env, body) {
     });
   }
   
-  const githubApi = env.GITHUB_API || 'https://api.github.com';
-  const url = `${githubApi}/login/device/code`;
+  // OAuth endpoints are on github.com, not api.github.com
+  const url = 'https://github.com/login/device/code';
   
   const params = new URLSearchParams({
     client_id: clientId
@@ -137,8 +137,8 @@ async function handleUserTokenPoll(request, env, body) {
   }
   
   const clientId = env.GITHUB_CLIENT_ID;
-  const githubApi = env.GITHUB_API || 'https://api.github.com';
-  const url = `${githubApi}/login/oauth/access_token`;
+  // OAuth endpoints are on github.com, not api.github.com
+  const url = 'https://github.com/login/oauth/access_token';
   
   const params = new URLSearchParams({
     client_id: clientId,
