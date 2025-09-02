@@ -115,6 +115,9 @@ All requests require GitHub authentication via `Authorization: Bearer` header:
 Check if the GitHub App is installed on a repository:
 
 ```bash
+# First, set your GitHub token
+export GITHUB_TOKEN=your_github_token
+
 # Check installation status
 ./check-app owner/repo
 
