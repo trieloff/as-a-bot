@@ -51,7 +51,10 @@ async function handleUserTokenStart(request, env, body) {
     client_id: clientId
   });
   
-  if (scopes) {
+  // IMPORTANT: For GitHub Apps, we should NOT send scopes
+  // GitHub Apps use fine-grained permissions, not OAuth scopes
+  // Sending scopes makes it behave like an OAuth App
+  if (scopes && false) { // Disabled - never send scopes for GitHub App
     params.append('scope', scopes);
   }
   
@@ -143,6 +146,7 @@ async function exchangeForInstallationToken(oauthToken, env) {
     const jwt = await createAppJWT(env.GITHUB_APP_ID, env.GITHUB_APP_PRIVATE_KEY);
     
     // Create installation access token
+    // We'll request the same permissions the user authorized
     const tokenResponse = await fetch(
       `https://api.github.com/app/installations/${installation.id}/access_tokens`,
       {
@@ -152,7 +156,14 @@ async function exchangeForInstallationToken(oauthToken, env) {
           'Accept': 'application/vnd.github.v3+json'
         },
         body: JSON.stringify({
-          permissions: installation.permissions
+          // Request repo scope to match what the OAuth token has
+          repositories: 'all',
+          permissions: {
+            contents: 'write',
+            issues: 'write',
+            pull_requests: 'write',
+            metadata: 'read'
+          }
         })
       }
     );
