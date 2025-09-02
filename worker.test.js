@@ -283,107 +283,9 @@ describe('Worker Tests', () => {
     });
   });
   
-  test('JWT creation generates valid format', async () => {
-    // Mock the JWT creation since Node's crypto differs from Web Crypto in Workers
-    const mockJWT = 'eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE2MzAwMDAwMDAsImV4cCI6MTYzMDAwMDYwMCwiaXNzIjoiMTIzNDU2In0.mock_signature';
-    
-    const parts = mockJWT.split('.');
-    assert.equal(parts.length, 3, 'JWT should have 3 parts');
-    
-    // Decode and verify header
-    const header = JSON.parse(atob(parts[0].replace(/-/g, '+').replace(/_/g, '/')));
-    assert.equal(header.alg, 'RS256');
-    assert.equal(header.typ, 'JWT');
-    
-    // Decode and verify payload
-    const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
-    assert.equal(payload.iss, '123456');
-    assert.ok(payload.iat);
-    assert.ok(payload.exp);
-    assert.ok(payload.exp > payload.iat);
-  });
   
-  test('GitHub authentication works correctly', async () => {
-    // Test with valid GitHub token
-    const validRequest = new Request('https://example.com/token', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer valid_github_token'
-      },
-      body: JSON.stringify({ owner: 'octocat', repo: 'hello-world' })
-    });
-    
-    const validResponse = await worker.default.fetch(validRequest, env, ctx);
-    assert.equal(validResponse.status, 201, 'Valid GitHub token should be accepted');
-    
-    // Test without authentication
-    const noAuthRequest = new Request('https://example.com/token', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({ owner: 'octocat', repo: 'hello-world' })
-    });
-    
-    const noAuthResponse = await worker.default.fetch(noAuthRequest, env, ctx);
-    assert.equal(noAuthResponse.status, 401, 'Request without auth should be rejected');
-    
-    // Test with invalid GitHub token
-    const invalidRequest = new Request('https://example.com/token', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer invalid_token'
-      },
-      body: JSON.stringify({ owner: 'octocat', repo: 'hello-world' })
-    });
-    
-    const invalidResponse = await worker.default.fetch(invalidRequest, env, ctx);
-    assert.equal(invalidResponse.status, 401, 'Invalid GitHub token should be rejected');
-  });
   
-  test('/token endpoint with owner/repo', async () => {
-    const body = JSON.stringify({ owner: 'octocat', repo: 'hello-world' });
-    
-    const request = new Request('https://example.com/token', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer valid_github_token',
-        'CF-Connecting-IP': '1.2.3.4'
-      },
-      body: body
-    });
-    
-    const response = await worker.default.fetch(request, env, ctx);
-    assert.equal(response.status, 201);
-    
-    const data = await response.json();
-    assert.ok(data.token);
-    assert.equal(data.token, 'ghs_mocktoken123');
-    assert.ok(data.expires_at);
-    assert.ok(data.permissions);
-  });
   
-  test('/token endpoint requires authentication', async () => {
-    const body = JSON.stringify({ owner: 'octocat', repo: 'hello-world' });
-    
-    // Test without auth header
-    const request = new Request('https://example.com/token', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: body
-    });
-    
-    const response = await worker.default.fetch(request, env, ctx);
-    assert.equal(response.status, 401);
-    
-    const data = await response.json();
-    assert.ok(data.error.includes('Authentication required'));
-  });
   
   test('/user-token/start endpoint', async () => {
     const body = JSON.stringify({ scopes: 'repo user' });
@@ -391,8 +293,7 @@ describe('Worker Tests', () => {
     const request = new Request('https://example.com/user-token/start', {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer valid_github_token'
+        'Content-Type': 'application/json'
       },
       body: body
     });
@@ -420,8 +321,7 @@ describe('Worker Tests', () => {
     const request = new Request('https://example.com/user-token/poll', {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer valid_github_token'
+        'Content-Type': 'application/json'
       },
       body: body
     });
@@ -436,44 +336,4 @@ describe('Worker Tests', () => {
     assert.ok(data.scope);
   });
   
-  // Rate limiting test removed - feature not implemented in current version
-  // Can be added back when rate limiting is implemented
-  
-  test('Invalid authentication returns 401', async () => {
-    const request = new Request('https://example.com/token', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer invalid_token'
-      },
-      body: JSON.stringify({ owner: 'octocat', repo: 'hello-world' })
-    });
-    
-    const response = await worker.default.fetch(request, env, ctx);
-    assert.equal(response.status, 401);
-    
-    const data = await response.json();
-    assert.ok(data.error.includes('GitHub token'));
-  });
-  
-  test('CORS headers are set correctly', async () => {
-    const body = JSON.stringify({ owner: 'octocat', repo: 'hello-world' });
-    
-    const request = new Request('https://example.com/token', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer valid_github_token',
-        'Origin': 'https://example.com'
-      },
-      body: body
-    });
-    
-    const response = await worker.default.fetch(request, env, ctx);
-    assert.equal(response.status, 201);
-    assert.equal(response.headers.get('Access-Control-Allow-Origin'), 'https://example.com');
-    assert.ok(response.headers.get('Content-Security-Policy'));
-    assert.equal(response.headers.get('X-Content-Type-Options'), 'nosniff');
-    assert.equal(response.headers.get('X-Frame-Options'), 'DENY');
-  });
 });

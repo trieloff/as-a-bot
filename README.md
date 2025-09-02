@@ -1,212 +1,137 @@
-# GitHub App Token Broker for Cloudflare Workers
+# GitHub App Token Broker for ai-aligned-gh
 
-![As-A-Bot Token Broker](./hero-image.png)
+A minimal Cloudflare Worker that provides user-to-server GitHub tokens via device flow for `ai-aligned-gh`. 
 
-A secure token broker service that manages GitHub App tokens, providing both installation tokens and user-to-server tokens via OAuth device flow.
+**Key Feature**: Actions appear as the user (with app badge), not as "app/as-a-bot".
 
-🌐 **Live at**: https://as-bot-worker.minivelos.workers.dev
+## 🎯 Problem Solved
 
-## Features
+- ❌ **Without this worker**: PRs show `app/as-a-bot` as author
+- ✅ **With this worker**: PRs show `username` + app badge as author
 
-- **Installation Tokens**: Mint GitHub App installation tokens for automated workflows
-- **User-to-Server Tokens**: Support explicit user attribution via OAuth device flow (optional, requires KV)
-- **Security**: GitHub token authentication with permission validation
-- **Privilege Prevention**: Ensures users can't escalate permissions beyond their access level
-- **Performance**: Runs on Cloudflare Workers edge network
-- **Minimal Dependencies**: Uses Web Crypto API for JWT signing
-- **Health Check**: Built-in health endpoint for monitoring
+## 🚀 Quick Start
 
-## Installation for End Users
+### Prerequisites
 
-To use the As-A-Bot GitHub App in your repositories:
+1. **GitHub App with Device Flow enabled**:
+   - Go to your GitHub App settings
+   - Check ✅ "Enable Device Flow"
+   - Note the Client ID
 
-1. **Install the GitHub App**: Visit https://github.com/apps/as-a-bot
-2. **Select repositories**: Choose which repositories the app should have access to
-3. **Configure permissions**: Grant the necessary permissions for your use case
-4. **Start using the API**: Once installed, you can request tokens for your repositories using the API endpoints
+2. **Cloudflare Workers account**
 
-## Setup for Self-Hosting
-
-### 1. Create GitHub App
-
-1. Go to GitHub Settings > Developer settings > GitHub Apps
-2. Create a new GitHub App with required permissions
-3. Generate and download a private key
-4. Note the App ID and Client ID
-
-### 2. Deploy to Cloudflare Workers
+### Deploy
 
 ```bash
+# Clone and install
+git clone https://github.com/trieloff/as-a-bot
+cd as-a-bot
 npm install
+
+# Configure
+wrangler secret put GITHUB_CLIENT_ID  # Enter your GitHub App Client ID
+
+# Deploy
 wrangler deploy
 ```
 
-Note: Device flow requires KV namespace. To enable it:
+## 🔌 API Endpoints
+
+Only two endpoints needed for device flow:
+
+### Start Device Flow
 ```bash
-wrangler kv:namespace create "DEVICE_CODES"
-# Update wrangler.toml with the namespace ID
-```
+POST /user-token/start
+Body: {"scopes": "repo"}
 
-### 3. Configure Secrets
-
-```bash
-# GitHub App credentials
-wrangler secret put GITHUB_APP_PRIVATE_KEY  # Paste entire PEM key
-wrangler secret put GITHUB_APP_ID           # Numeric App ID
-wrangler secret put GITHUB_CLIENT_ID        # Client ID
-
-# For GitHub Actions deployment
-# Add CLOUDFLARE_TOKEN to your GitHub repository secrets
-```
-
-## API Usage
-
-### Health Check
-
-```bash
-curl https://as-bot-worker.minivelos.workers.dev/health
-```
-
-### Get Installation Token
-
-```bash
-# Authenticate with your GitHub personal access token
-curl -X POST https://as-bot-worker.minivelos.workers.dev/token \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $GITHUB_TOKEN" \
-  -d '{"owner": "org", "repo": "repo"}'
-```
-
-### User-to-Server Token (Device Flow)
-
-Note: Requires KV namespace configuration.
-
-```bash
-# Start device flow
-curl -X POST https://as-bot-worker.minivelos.workers.dev/user-token/start \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $GITHUB_TOKEN" \
-  -d '{"scopes": "repo user"}'
-
-# Poll for token
-curl -X POST https://as-bot-worker.minivelos.workers.dev/user-token/poll \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $GITHUB_TOKEN" \
-  -d '{"device_code": "..."}'
-```
-
-### Shell Integration
-
-```bash
-# Export token for GitHub CLI
-export GH_TOKEN=$(curl -sS -X POST https://as-bot-worker.minivelos.workers.dev/token \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $GITHUB_TOKEN" \
-  -d '{"owner": "org", "repo": "repo"}' | jq -r .token)
-
-# Use with GitHub CLI
-gh api user --jq .login
-```
-
-## Authentication
-
-All requests require GitHub authentication via `Authorization: Bearer` header:
-
-1. Obtain a GitHub personal access token or OAuth token
-2. Send as `Authorization: Bearer <token>` header
-3. The broker verifies:
-   - Token validity
-   - User has access to the requested repository
-   - User permissions match or exceed app requirements
-
-## Utility Scripts
-
-### Installation Checker
-
-Check if the GitHub App is installed on a repository:
-
-```bash
-# First, set your GitHub token
-export GITHUB_TOKEN=your_github_token
-
-# Check installation status
-./check-app owner/repo
-
-# Examples
-./check-app trieloff/as-a-bot  # Check this repo
-./check-app facebook/react      # Check any repo
-```
-
-The script will:
-- Verify if the app is installed
-- Show installation URL if not installed
-- Offer to open browser for installation (interactive mode)
-
-## Security Features
-
-- GitHub token authentication with user verification
-- Repository access validation
-- Permission matching to prevent privilege escalation
-- No token storage or caching
-- Automatic expiration headers
-- CORS protection (configurable origins)
-- Content Security Policy headers
-- Audit logging of all token requests
-
-## Testing
-
-```bash
-npm test
-```
-
-## Environment Variables
-
-| Variable | Description | Required |
-|----------|-------------|----------|
-| `GITHUB_APP_PRIVATE_KEY` | RSA private key in PEM format | Yes |
-| `GITHUB_APP_ID` | Numeric GitHub App ID | Yes |
-| `GITHUB_CLIENT_ID` | GitHub App Client ID | Yes |
-| `GITHUB_API` | GitHub API URL (default: https://api.github.com) | No |
-| `ALLOWED_ORIGINS` | Comma-separated CORS origins | No |
-
-## Endpoints
-
-- `GET /health` - Health check and service info
-- `POST /token` - Get installation access token
-- `POST /user-token/start` - Start OAuth device flow (requires KV)
-- `POST /user-token/poll` - Poll for user token (requires KV)
-
-## Response Format
-
-### Installation Token
-```json
-{
-  "token": "ghs_...",
-  "expires_at": "2024-01-01T00:00:00Z",
-  "permissions": {...},
-  "repositories": [...]
-}
-```
-
-### Device Flow Start
-```json
+Response:
 {
   "device_code": "...",
-  "user_code": "XXXX-XXXX",
+  "user_code": "ABCD-1234",
   "verification_uri": "https://github.com/login/device",
   "expires_in": 900,
   "interval": 5
 }
 ```
 
-### User Token
-```json
+### Poll for Token
+```bash
+POST /user-token/poll
+Body: {"device_code": "..."}
+
+Response:
 {
-  "access_token": "ghu_...",
+  "access_token": "ghu_...",  # User-to-server token
   "token_type": "bearer",
-  "expires_at": "2024-01-01T00:00:00Z",
-  "scope": "repo user"
+  "expires_at": "...",
+  "scope": "repo"
 }
+```
+
+## 🔧 Integration with ai-aligned-gh
+
+`ai-aligned-gh` will automatically use this worker to get properly attributed tokens:
+
+```bash
+# Configure ai-aligned-gh with your worker URL
+export AS_A_BOT_WORKER_URL="https://your-worker.workers.dev"
+
+# Use ai-aligned-gh normally - it handles the device flow
+ai-aligned-gh pr create --title "My PR" --body "Properly attributed!"
+```
+
+## 📝 Manual Testing
+
+```bash
+# Start device flow
+RESPONSE=$(curl -sS -X POST https://your-worker.workers.dev/user-token/start \
+  -H "Content-Type: application/json" \
+  -d '{"scopes": "repo"}')
+
+# Extract values
+USER_CODE=$(echo $RESPONSE | jq -r .user_code)
+DEVICE_CODE=$(echo $RESPONSE | jq -r .device_code)
+
+# Show instructions
+echo "1. Go to: https://github.com/login/device"
+echo "2. Enter code: $USER_CODE"
+echo "3. Then run: curl -X POST https://your-worker.workers.dev/user-token/poll -d '{\"device_code\":\"$DEVICE_CODE\"}'"
+```
+
+## 🔍 Verify Attribution
+
+Create a test issue to verify proper attribution:
+
+```bash
+# Get token from device flow
+TOKEN="ghu_..."  # Your user-to-server token
+
+# Create issue
+curl -X POST https://api.github.com/repos/OWNER/REPO/issues \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"title": "Test", "body": "Should show me as author with app badge"}'
+```
+
+**Expected**: Issue shows your username + app badge, NOT "app/as-a-bot"
+
+## ⚙️ Configuration
+
+| Variable | Description | Required |
+|----------|-------------|----------|
+| `GITHUB_CLIENT_ID` | GitHub App Client ID | Yes |
+| `GITHUB_API` | GitHub API URL (default: https://api.github.com) | No |
+
+## 🏗️ Architecture
+
+```
+ai-aligned-gh
+     ↓
+[Device Flow Start] → User authorizes on GitHub
+     ↓
+[Device Flow Poll] → Receives user-to-server token
+     ↓
+GitHub API calls show proper user attribution
 ```
 
 ## Related Projects
@@ -225,6 +150,6 @@ This project is part of a suite of tools designed to improve the AI coding agent
 
 Together, these tools create a transparent and accountable environment for AI-assisted development on GitHub.
 
-## License
+## 📄 License
 
 Apache 2.0
