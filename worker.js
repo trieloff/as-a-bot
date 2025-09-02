@@ -288,9 +288,9 @@ async function handleUserTokenPoll(request, env, body) {
       });
     }
     
-    // Success - we have an OAuth token
-    // Now exchange it for an installation token to get app attribution
-    const finalToken = await exchangeForInstallationToken(data.access_token, env);
+    // Success - we have a token
+    // Don't exchange it - GitHub App device flow should already give us a user-to-server token
+    const finalToken = data.access_token; // await exchangeForInstallationToken(data.access_token, env);
     
     // Clean up device code (if KV is available)
     if (env.DEVICE_CODES) {
