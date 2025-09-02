@@ -1,0 +1,23 @@
+name = "as-bot-worker"
+main = "worker.js"
+compatibility_date = "2024-01-01"
+account_id = "155ec15a52a18a14801e04b019da5e5a"
+
+[env.production]
+name = "as-bot-worker"
+
+# KV Namespace for device codes (will be created during deployment)
+# [[kv_namespaces]]
+# binding = "DEVICE_CODES"
+# id = "YOUR_DEVICE_CODES_KV_ID"
+
+# Environment variables (non-sensitive)
+[vars]
+GITHUB_API = "https://api.github.com"
+ALLOWED_ORIGINS = ""
+
+# Secrets (configure with wrangler secret put)
+# GITHUB_APP_PRIVATE_KEY - PEM format private key
+# GITHUB_APP_ID - Numeric App ID
+# GITHUB_CLIENT_ID - App Client ID
+# CLOUDFLARE_TOKEN - For GitHub Actions deployment
