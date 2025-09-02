@@ -72,21 +72,21 @@ print_color "$BLUE" "🔍 Checking GitHub App installation for ${OWNER}/${REPO}.
 echo ""
 
 # Check if required environment variable is set
-if [ -z "$BROKER_CLIENT_SECRET" ]; then
-    print_color "$RED" "❌ Error: BROKER_CLIENT_SECRET environment variable is not set"
-    echo "Please set it with: export BROKER_CLIENT_SECRET='your-secret'"
+if [ -z "$GITHUB_TOKEN" ]; then
+    print_color "$RED" "❌ Error: GITHUB_TOKEN environment variable is not set"
+    echo "Please set your GitHub personal access token:"
+    echo "  export GITHUB_TOKEN=your_github_token"
     exit 1
 fi
 
 # Prepare the request
 BODY="{\"owner\":\"${OWNER}\",\"repo\":\"${REPO}\"}"
-AUTH=$(echo -n "POST/token${BODY}" | openssl dgst -sha256 -hmac "$BROKER_CLIENT_SECRET" -binary | base64)
 
 # Try to get a token for the repository
 print_color "$BLUE" "Checking with token broker..."
 response=$(curl -sS -X POST "${BROKER_URL}/token" \
     -H "Content-Type: application/json" \
-    -H "X-Client-Auth: $AUTH" \
+    -H "Authorization: Bearer $GITHUB_TOKEN" \
     -d "$BODY" \
     -w "\n__HTTP_STATUS__%{http_code}" 2>/dev/null || echo "ERROR")
 
@@ -148,7 +148,7 @@ elif [ "$http_status" = "404" ]; then
     
 elif [ "$http_status" = "401" ]; then
     print_color "$RED" "❌ Authentication failed"
-    echo "Please check your BROKER_CLIENT_SECRET environment variable"
+    echo "Please check your GITHUB_TOKEN environment variable"
     exit 1
     
 elif [ "$http_status" = "500" ]; then

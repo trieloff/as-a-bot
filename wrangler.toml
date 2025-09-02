@@ -20,5 +20,4 @@ ALLOWED_ORIGINS = ""
 # GITHUB_APP_PRIVATE_KEY - PEM format private key
 # GITHUB_APP_ID - Numeric App ID
 # GITHUB_CLIENT_ID - App Client ID
-# BROKER_CLIENT_SECRET - Shared HMAC secret
 # CLOUDFLARE_TOKEN - For GitHub Actions deployment

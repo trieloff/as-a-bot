@@ -1,12 +1,19 @@
 #!/bin/bash
-SECRET="$BROKER_CLIENT_SECRET"
+
+# Check if GITHUB_TOKEN is set
+if [ -z "$GITHUB_TOKEN" ]; then
+    echo "Error: GITHUB_TOKEN environment variable not set"
+    echo "Please set your GitHub personal access token:"
+    echo "  export GITHUB_TOKEN=your_github_token"
+    exit 1
+fi
+
 BODY='{"owner":"trieloff","repo":"as-a-bot"}'
-AUTH=$(echo -n "POST/token${BODY}" | openssl dgst -sha256 -hmac "$SECRET" -binary | base64)
 
 echo "Getting installation token for trieloff/as-a-bot..."
 response=$(curl -sS -X POST https://as-bot-worker.minivelos.workers.dev/token \
   -H "Content-Type: application/json" \
-  -H "X-Client-Auth: $AUTH" \
+  -H "Authorization: Bearer $GITHUB_TOKEN" \
   -d "$BODY")
 
 echo "$response" | jq '.'

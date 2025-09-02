@@ -8,7 +8,6 @@
  *    wrangler secret put GITHUB_APP_PRIVATE_KEY  # Paste the entire PEM key
  *    wrangler secret put GITHUB_APP_ID           # Numeric App ID
  *    wrangler secret put GITHUB_CLIENT_ID        # App Client ID
- *    wrangler secret put BROKER_CLIENT_SECRET    # Shared HMAC secret
  * 
  * 2. Deploy:
  *    wrangler deploy
@@ -16,45 +15,30 @@
  * Usage Examples:
  * 
  * Get installation token:
- *    # Preferred: Using GitHub user token
  *    curl -X POST https://your-worker.workers.dev/token \
  *      -H "Content-Type: application/json" \
  *      -H "Authorization: Bearer $GITHUB_TOKEN" \
  *      -d '{"owner": "org", "repo": "repo"}'
- * 
- *    # Deprecated: Using HMAC (will be removed)
- *    curl -X POST https://your-worker.workers.dev/token \
- *      -H "Content-Type: application/json" \
- *      -H "X-Client-Auth: $(echo -n 'POST/token{"installation_id":123}' | openssl dgst -sha256 -hmac $SECRET -binary | base64)" \
- *      -d '{"installation_id": 123}'
  * 
  * Get token by repo:
- *    # Preferred: Using GitHub user token
  *    curl -X POST https://your-worker.workers.dev/token \
  *      -H "Content-Type: application/json" \
  *      -H "Authorization: Bearer $GITHUB_TOKEN" \
- *      -d '{"owner": "org", "repo": "repo"}'
- * 
- *    # Deprecated: Using HMAC
- *    curl -X POST https://your-worker.workers.dev/token \
- *      -H "Content-Type: application/json" \
- *      -H "X-Client-Auth: $(echo -n 'POST/token{"owner":"org","repo":"repo"}' | openssl dgst -sha256 -hmac $SECRET -binary | base64)" \
  *      -d '{"owner": "org", "repo": "repo"}'
  * 
  * Start device flow:
  *    curl -X POST https://your-worker.workers.dev/user-token/start \
  *      -H "Content-Type: application/json" \
- *      -H "X-Client-Auth: $(echo -n 'POST/user-token/start{}' | openssl dgst -sha256 -hmac $SECRET -binary | base64)" \
+ *      -H "Authorization: Bearer $GITHUB_TOKEN" \
  *      -d '{}'
  * 
  * Poll device flow:
  *    curl -X POST https://your-worker.workers.dev/user-token/poll \
  *      -H "Content-Type: application/json" \
- *      -H "X-Client-Auth: $(echo -n 'POST/user-token/poll{"device_code":"..."}' | openssl dgst -sha256 -hmac $SECRET -binary | base64)" \
+ *      -H "Authorization: Bearer $GITHUB_TOKEN" \
  *      -d '{"device_code": "..."}'
  * 
  * Shell one-liner for token export:
- *    # Using GitHub user token (secure)
  *    export GH_TOKEN=$(curl -sS -X POST https://your-worker.workers.dev/token \
  *      -H "Content-Type: application/json" \
  *      -H "Authorization: Bearer $GITHUB_TOKEN" \
@@ -129,36 +113,6 @@ async function createAppJWT(privateKeyPEM, appId) {
   
   const signatureEncoded = base64UrlEncode(signature);
   return `${message}.${signatureEncoded}`;
-}
-
-// Verify HMAC authentication (deprecated - for backward compatibility)
-async function verifyHMAC(request, body, secret) {
-  const method = request.method;
-  const url = new URL(request.url);
-  const path = url.pathname;
-  const message = `${method}${path}${body}`;
-  
-  const providedAuth = request.headers.get('X-Client-Auth');
-  if (!providedAuth) {
-    return false;
-  }
-  
-  const key = await crypto.subtle.importKey(
-    'raw',
-    new TextEncoder().encode(secret),
-    { name: 'HMAC', hash: 'SHA-256' },
-    false,
-    ['sign']
-  );
-  
-  const signature = await crypto.subtle.sign(
-    'HMAC',
-    key,
-    new TextEncoder().encode(message)
-  );
-  
-  const expectedAuth = btoa(String.fromCharCode(...new Uint8Array(signature)));
-  return providedAuth === expectedAuth;
 }
 
 // Verify GitHub user token and get user info
@@ -688,7 +642,7 @@ export default {
     if (origin && allowedOrigins.includes(origin)) {
       corsHeaders['Access-Control-Allow-Origin'] = origin;
       corsHeaders['Access-Control-Allow-Methods'] = 'POST, OPTIONS';
-      corsHeaders['Access-Control-Allow-Headers'] = 'Content-Type, X-Client-Auth';
+      corsHeaders['Access-Control-Allow-Headers'] = 'Content-Type, Authorization';
     }
     
     // Add security headers
@@ -818,37 +772,17 @@ export default {
           };
         }
       } else {
-        // Fall back to HMAC authentication (deprecated)
-        const secret = env.BROKER_CLIENT_SECRET;
-        if (!secret) {
-          return new Response(JSON.stringify({
-            error: 'Authentication required. Use GitHub token in Authorization header.'
-          }), {
-            status: 401,
-            headers: {
-              ...securityHeaders,
-              'Content-Type': 'application/json',
-              'WWW-Authenticate': 'Bearer realm="GitHub App Token Broker"'
-            }
-          });
-        }
-        
-        const isValid = await verifyHMAC(request, rawBody, secret);
-        if (!isValid) {
-          return new Response(JSON.stringify({
-            error: 'Invalid authentication. Use GitHub token in Authorization header.'
-          }), {
-            status: 401,
-            headers: {
-              ...securityHeaders,
-              'Content-Type': 'application/json',
-              'WWW-Authenticate': 'Bearer realm="GitHub App Token Broker"'
-            }
-          });
-        }
-        
-        // Log warning about deprecated auth method
-        console.warn('HMAC authentication is deprecated. Please use GitHub token authentication.');
+        // No GitHub token provided
+        return new Response(JSON.stringify({
+          error: 'Authentication required. Use GitHub token in Authorization header.'
+        }), {
+          status: 401,
+          headers: {
+            ...securityHeaders,
+            'Content-Type': 'application/json',
+            'WWW-Authenticate': 'Bearer realm="GitHub App Token Broker"'
+          }
+        });
       }
     } catch (error) {
       return new Response(JSON.stringify({

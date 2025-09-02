@@ -8,7 +8,8 @@ A secure token broker service that manages GitHub App tokens, providing both ins
 
 - **Installation Tokens**: Mint GitHub App installation tokens for automated workflows
 - **User-to-Server Tokens**: Support explicit user attribution via OAuth device flow (optional, requires KV)
-- **Security**: HMAC authentication, CORS protection
+- **Security**: GitHub token authentication with permission validation
+- **Privilege Prevention**: Ensures users can't escalate permissions beyond their access level
 - **Performance**: Runs on Cloudflare Workers edge network
 - **Minimal Dependencies**: Uses Web Crypto API for JWT signing
 - **Health Check**: Built-in health endpoint for monitoring
@@ -43,9 +44,6 @@ wrangler secret put GITHUB_APP_PRIVATE_KEY  # Paste entire PEM key
 wrangler secret put GITHUB_APP_ID           # Numeric App ID
 wrangler secret put GITHUB_CLIENT_ID        # Client ID
 
-# Broker authentication
-wrangler secret put BROKER_CLIENT_SECRET    # Your shared secret
-
 # For GitHub Actions deployment
 # Add CLOUDFLARE_TOKEN to your GitHub repository secrets
 ```
@@ -61,16 +59,10 @@ curl https://as-bot-worker.minivelos.workers.dev/health
 ### Get Installation Token
 
 ```bash
-# By installation ID
+# Authenticate with your GitHub personal access token
 curl -X POST https://as-bot-worker.minivelos.workers.dev/token \
   -H "Content-Type: application/json" \
-  -H "X-Client-Auth: $(echo -n 'POST/token{"installation_id":123}' | openssl dgst -sha256 -hmac $SECRET -binary | base64)" \
-  -d '{"installation_id": 123}'
-
-# By repository
-curl -X POST https://as-bot-worker.minivelos.workers.dev/token \
-  -H "Content-Type: application/json" \
-  -H "X-Client-Auth: $(echo -n 'POST/token{"owner":"org","repo":"repo"}' | openssl dgst -sha256 -hmac $SECRET -binary | base64)" \
+  -H "Authorization: Bearer $GITHUB_TOKEN" \
   -d '{"owner": "org", "repo": "repo"}'
 ```
 
@@ -82,13 +74,13 @@ Note: Requires KV namespace configuration.
 # Start device flow
 curl -X POST https://as-bot-worker.minivelos.workers.dev/user-token/start \
   -H "Content-Type: application/json" \
-  -H "X-Client-Auth: $(echo -n 'POST/user-token/start{"scopes":"repo user"}' | openssl dgst -sha256 -hmac $SECRET -binary | base64)" \
+  -H "Authorization: Bearer $GITHUB_TOKEN" \
   -d '{"scopes": "repo user"}'
 
 # Poll for token
 curl -X POST https://as-bot-worker.minivelos.workers.dev/user-token/poll \
   -H "Content-Type: application/json" \
-  -H "X-Client-Auth: $(echo -n 'POST/user-token/poll{"device_code":"..."}' | openssl dgst -sha256 -hmac $SECRET -binary | base64)" \
+  -H "Authorization: Bearer $GITHUB_TOKEN" \
   -d '{"device_code": "..."}'
 ```
 
@@ -98,7 +90,7 @@ curl -X POST https://as-bot-worker.minivelos.workers.dev/user-token/poll \
 # Export token for GitHub CLI
 export GH_TOKEN=$(curl -sS -X POST https://as-bot-worker.minivelos.workers.dev/token \
   -H "Content-Type: application/json" \
-  -H "X-Client-Auth: $(echo -n 'POST/token{"owner":"org","repo":"repo"}' | openssl dgst -sha256 -hmac $SECRET -binary | base64)" \
+  -H "Authorization: Bearer $GITHUB_TOKEN" \
   -d '{"owner": "org", "repo": "repo"}' | jq -r .token)
 
 # Use with GitHub CLI
@@ -107,12 +99,14 @@ gh api user --jq .login
 
 ## Authentication
 
-All requests require HMAC-SHA256 authentication via `X-Client-Auth` header:
+All requests require GitHub authentication via `Authorization: Bearer` header:
 
-1. Construct message: `METHOD + PATH + BODY`
-2. Sign with shared secret using HMAC-SHA256
-3. Base64 encode the signature
-4. Send as `X-Client-Auth` header
+1. Obtain a GitHub personal access token or OAuth token
+2. Send as `Authorization: Bearer <token>` header
+3. The broker verifies:
+   - Token validity
+   - User has access to the requested repository
+   - User permissions match or exceed app requirements
 
 ## Utility Scripts
 
@@ -136,11 +130,14 @@ The script will:
 
 ## Security Features
 
-- HMAC authentication on all endpoints
+- GitHub token authentication with user verification
+- Repository access validation
+- Permission matching to prevent privilege escalation
 - No token storage or caching
 - Automatic expiration headers
 - CORS protection (configurable origins)
 - Content Security Policy headers
+- Audit logging of all token requests
 
 ## Testing
 
@@ -155,7 +152,6 @@ npm test
 | `GITHUB_APP_PRIVATE_KEY` | RSA private key in PEM format | Yes |
 | `GITHUB_APP_ID` | Numeric GitHub App ID | Yes |
 | `GITHUB_CLIENT_ID` | GitHub App Client ID | Yes |
-| `BROKER_CLIENT_SECRET` | Shared secret for HMAC auth | Yes |
 | `GITHUB_API` | GitHub API URL (default: https://api.github.com) | No |
 | `ALLOWED_ORIGINS` | Comma-separated CORS origins | No |
 

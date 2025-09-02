@@ -1,14 +1,13 @@
 #!/bin/bash
 
 # Get the token
-SECRET="$BROKER_CLIENT_SECRET"
+SECRET="$GITHUB_TOKEN"
 BODY='{"owner":"trieloff","repo":"as-a-bot"}'
-AUTH=$(echo -n "POST/token${BODY}" | openssl dgst -sha256 -hmac "$SECRET" -binary | base64)
 
 echo "Getting token and checking permissions..."
 response=$(curl -sS -X POST https://as-bot-worker.minivelos.workers.dev/token \
   -H "Content-Type: application/json" \
-  -H "X-Client-Auth: $AUTH" \
+  -H "Authorization: Bearer $GITHUB_TOKEN" \
   -d "$BODY")
 
 echo "Token response:"

@@ -1,7 +1,6 @@
 #!/bin/bash
-SECRET="$BROKER_CLIENT_SECRET"
+SECRET="$GITHUB_TOKEN"
 BODY='{}'
-AUTH=$(echo -n "GET/health${BODY}" | openssl dgst -sha256 -hmac "$SECRET" -binary | base64)
 
 # First verify the worker is responding
 echo "Checking worker health..."
