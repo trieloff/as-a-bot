@@ -14,7 +14,16 @@ A secure token broker service that manages GitHub App tokens, providing both ins
 - **Minimal Dependencies**: Uses Web Crypto API for JWT signing
 - **Health Check**: Built-in health endpoint for monitoring
 
-## Setup
+## Installation for End Users
+
+To use the As-A-Bot GitHub App in your repositories:
+
+1. **Install the GitHub App**: Visit https://github.com/apps/as-a-bot-app
+2. **Select repositories**: Choose which repositories the app should have access to
+3. **Configure permissions**: Grant the necessary permissions for your use case
+4. **Start using the API**: Once installed, you can request tokens for your repositories using the API endpoints
+
+## Setup for Self-Hosting
 
 ### 1. Create GitHub App
 
@@ -200,4 +209,4 @@ npm test
 
 ## License
 
-MIT
+Apache 2.0
