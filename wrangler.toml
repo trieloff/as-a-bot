@@ -12,9 +12,9 @@ binding = "DEVICE_CODES"
 id = "4d16c1ca5973424990ae00ab7f5c6bf7"
 
 # KV Namespace for auth states (web flow)
-# [[kv_namespaces]]
-# binding = "AUTH_STATES"
-# id = "NEEDS_TO_BE_CREATED"
+[[kv_namespaces]]
+binding = "AUTH_STATES"
+id = "6fac9e3755f74be0b56d33da9d0942d9"
 
 # Environment variables (non-sensitive)
 [vars]
