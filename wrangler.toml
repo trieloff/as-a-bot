@@ -6,10 +6,10 @@ account_id = "155ec15a52a18a14801e04b019da5e5a"
 [env.production]
 name = "as-bot-worker"
 
-# KV Namespace for device codes (will be created during deployment)
-# [[kv_namespaces]]
-# binding = "DEVICE_CODES"
-# id = "YOUR_DEVICE_CODES_KV_ID"
+# KV Namespace for device codes
+[[kv_namespaces]]
+binding = "DEVICE_CODES"
+id = "4d16c1ca5973424990ae00ab7f5c6bf7"
 
 # Environment variables (non-sensitive)
 [vars]
