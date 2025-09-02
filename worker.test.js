@@ -303,87 +303,8 @@ describe('Worker Tests', () => {
     assert.ok(payload.exp > payload.iat);
   });
   
-  test('GitHub authentication works correctly', async () => {
-    // Test with valid GitHub token
-    const validRequest = new Request('https://example.com/token', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer valid_github_token'
-      },
-      body: JSON.stringify({ owner: 'octocat', repo: 'hello-world' })
-    });
-    
-    const validResponse = await worker.default.fetch(validRequest, env, ctx);
-    assert.equal(validResponse.status, 201, 'Valid GitHub token should be accepted');
-    
-    // Test without authentication
-    const noAuthRequest = new Request('https://example.com/token', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({ owner: 'octocat', repo: 'hello-world' })
-    });
-    
-    const noAuthResponse = await worker.default.fetch(noAuthRequest, env, ctx);
-    assert.equal(noAuthResponse.status, 401, 'Request without auth should be rejected');
-    
-    // Test with invalid GitHub token
-    const invalidRequest = new Request('https://example.com/token', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer invalid_token'
-      },
-      body: JSON.stringify({ owner: 'octocat', repo: 'hello-world' })
-    });
-    
-    const invalidResponse = await worker.default.fetch(invalidRequest, env, ctx);
-    assert.equal(invalidResponse.status, 401, 'Invalid GitHub token should be rejected');
-  });
   
-  test('/token endpoint with owner/repo', async () => {
-    const body = JSON.stringify({ owner: 'octocat', repo: 'hello-world' });
-    
-    const request = new Request('https://example.com/token', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer valid_github_token',
-        'CF-Connecting-IP': '1.2.3.4'
-      },
-      body: body
-    });
-    
-    const response = await worker.default.fetch(request, env, ctx);
-    assert.equal(response.status, 201);
-    
-    const data = await response.json();
-    assert.ok(data.token);
-    assert.equal(data.token, 'ghs_mocktoken123');
-    assert.ok(data.expires_at);
-    assert.ok(data.permissions);
-  });
   
-  test('/token endpoint requires authentication', async () => {
-    const body = JSON.stringify({ owner: 'octocat', repo: 'hello-world' });
-    
-    // Test without auth header
-    const request = new Request('https://example.com/token', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: body
-    });
-    
-    const response = await worker.default.fetch(request, env, ctx);
-    assert.equal(response.status, 401);
-    
-    const data = await response.json();
-    assert.ok(data.error.includes('Authentication required'));
-  });
   
   test('/user-token/start endpoint', async () => {
     const body = JSON.stringify({ scopes: 'repo user' });
@@ -391,8 +312,7 @@ describe('Worker Tests', () => {
     const request = new Request('https://example.com/user-token/start', {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer valid_github_token'
+        'Content-Type': 'application/json'
       },
       body: body
     });
@@ -420,8 +340,7 @@ describe('Worker Tests', () => {
     const request = new Request('https://example.com/user-token/poll', {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer valid_github_token'
+        'Content-Type': 'application/json'
       },
       body: body
     });
@@ -436,41 +355,84 @@ describe('Worker Tests', () => {
     assert.ok(data.scope);
   });
   
-  // Rate limiting test removed - feature not implemented in current version
-  // Can be added back when rate limiting is implemented
-  
-  test('Invalid authentication returns 401', async () => {
-    const request = new Request('https://example.com/token', {
+  test('/oauth/authorize endpoint', async () => {
+    const body = JSON.stringify({ scopes: 'repo user', state: 'test-state' });
+    
+    const request = new Request('https://example.com/oauth/authorize', {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer invalid_token'
+        'Content-Type': 'application/json'
       },
-      body: JSON.stringify({ owner: 'octocat', repo: 'hello-world' })
+      body: body
     });
     
     const response = await worker.default.fetch(request, env, ctx);
-    assert.equal(response.status, 401);
+    assert.equal(response.status, 200);
     
     const data = await response.json();
-    assert.ok(data.error.includes('GitHub token'));
+    assert.ok(data.authorization_url);
+    assert.ok(data.authorization_url.includes('github.com/login/oauth/authorize'));
+    assert.ok(data.authorization_url.includes('client_id='));
+    assert.ok(data.authorization_url.includes('scope=repo+user'));
+    assert.ok(data.authorization_url.includes('state=test-state'));
+    assert.ok(data.message);
   });
   
-  test('CORS headers are set correctly', async () => {
-    const body = JSON.stringify({ owner: 'octocat', repo: 'hello-world' });
+  test('/oauth/callback endpoint', async () => {
+    const body = JSON.stringify({ code: 'test-auth-code', state: 'test-state' });
     
-    const request = new Request('https://example.com/token', {
+    const request = new Request('https://example.com/oauth/callback', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: body
+    });
+    
+    const response = await worker.default.fetch(request, env, ctx);
+    assert.equal(response.status, 200);
+    
+    const data = await response.json();
+    assert.ok(data.access_token);
+    assert.equal(data.token_type, 'bearer');
+    assert.ok(data.expires_at);
+    assert.ok(data.scope);
+    assert.equal(data.state, 'test-state');
+  });
+  
+  test('/oauth/callback endpoint requires authorization code', async () => {
+    const body = JSON.stringify({ state: 'test-state' }); // Missing code
+    
+    const request = new Request('https://example.com/oauth/callback', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: body
+    });
+    
+    const response = await worker.default.fetch(request, env, ctx);
+    assert.equal(response.status, 400);
+    
+    const data = await response.json();
+    assert.ok(data.error.includes('Authorization code is required'));
+  });
+  
+  
+  test('CORS headers are set correctly', async () => {
+    const body = JSON.stringify({ scopes: 'repo' });
+    
+    const request = new Request('https://example.com/user-token/start', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': 'Bearer valid_github_token',
         'Origin': 'https://example.com'
       },
       body: body
     });
     
     const response = await worker.default.fetch(request, env, ctx);
-    assert.equal(response.status, 201);
+    assert.equal(response.status, 200);
     assert.equal(response.headers.get('Access-Control-Allow-Origin'), 'https://example.com');
     assert.ok(response.headers.get('Content-Security-Policy'));
     assert.equal(response.headers.get('X-Content-Type-Options'), 'nosniff');

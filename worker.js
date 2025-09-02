@@ -1,48 +1,45 @@
 /**
  * GitHub App Token Broker for Cloudflare Workers
  * 
- * README:
+ * This worker provides user-to-server GitHub tokens that properly attribute
+ * actions to users while showing the GitHub App badge. This ensures proper
+ * user attribution in GitHub's UI and audit logs.
  * 
  * Setup:
  * 1. Configure secrets:
- *    wrangler secret put GITHUB_APP_PRIVATE_KEY  # Paste the entire PEM key
- *    wrangler secret put GITHUB_APP_ID           # Numeric App ID
- *    wrangler secret put GITHUB_CLIENT_ID        # App Client ID
+ *    wrangler secret put GITHUB_CLIENT_ID        # App Client ID  
  * 
  * 2. Deploy:
  *    wrangler deploy
  * 
  * Usage Examples:
  * 
- * Get installation token:
- *    curl -X POST https://your-worker.workers.dev/token \
- *      -H "Content-Type: application/json" \
- *      -H "Authorization: Bearer $GITHUB_TOKEN" \
- *      -d '{"owner": "org", "repo": "repo"}'
- * 
- * Get token by repo:
- *    curl -X POST https://your-worker.workers.dev/token \
- *      -H "Content-Type: application/json" \
- *      -H "Authorization: Bearer $GITHUB_TOKEN" \
- *      -d '{"owner": "org", "repo": "repo"}'
- * 
- * Start device flow:
+ * Start device flow (get user code for authorization):
  *    curl -X POST https://your-worker.workers.dev/user-token/start \
  *      -H "Content-Type: application/json" \
- *      -H "Authorization: Bearer $GITHUB_TOKEN" \
- *      -d '{}'
+ *      -d '{"scopes": "repo"}'
  * 
- * Poll device flow:
+ * Poll device flow (exchange device code for user token):
  *    curl -X POST https://your-worker.workers.dev/user-token/poll \
  *      -H "Content-Type: application/json" \
- *      -H "Authorization: Bearer $GITHUB_TOKEN" \
- *      -d '{"device_code": "..."}'
+ *      -d '{"device_code": "device_abc123"}'
  * 
- * Shell one-liner for token export:
- *    export GH_TOKEN=$(curl -sS -X POST https://your-worker.workers.dev/token \
- *      -H "Content-Type: application/json" \
- *      -H "Authorization: Bearer $GITHUB_TOKEN" \
- *      -d '{"owner": "org", "repo": "repo"}' | jq -r .token)
+ * The returned tokens are user-to-server tokens that:
+ * - Attribute actions to the specific user (not the app)
+ * - Show the app badge next to the user's name  
+ * - Appear in audit logs as "GitHub App user-to-server token"
+ * - Respect the user's existing permissions
+ * 
+ * Shell example for device flow:
+ *    # Start the flow
+ *    DEVICE_DATA=$(curl -sS -X POST https://your-worker.workers.dev/user-token/start -d '{}')
+ *    echo "Go to: $(echo $DEVICE_DATA | jq -r .verification_uri)"
+ *    echo "Enter code: $(echo $DEVICE_DATA | jq -r .user_code)"
+ *    
+ *    # Poll for token (repeat until success)
+ *    DEVICE_CODE=$(echo $DEVICE_DATA | jq -r .device_code)
+ *    export GH_TOKEN=$(curl -sS -X POST https://your-worker.workers.dev/user-token/poll \
+ *      -d "{\"device_code\": \"$DEVICE_CODE\"}" | jq -r .access_token)
  */
 
 // Utilities for base64url encoding
@@ -72,204 +69,10 @@ function pemToArrayBuffer(pem) {
   return bytes.buffer;
 }
 
-// Create GitHub App JWT
-async function createAppJWT(privateKeyPEM, appId) {
-  const now = Math.floor(Date.now() / 1000);
-  
-  const header = {
-    alg: 'RS256',
-    typ: 'JWT'
-  };
-  
-  const payload = {
-    iat: now - 60, // Issue time - 60 seconds for clock skew
-    exp: now + 600, // Expires in 10 minutes
-    iss: appId
-  };
-  
-  const headerEncoded = base64UrlEncode(new TextEncoder().encode(JSON.stringify(header)));
-  const payloadEncoded = base64UrlEncode(new TextEncoder().encode(JSON.stringify(payload)));
-  const message = `${headerEncoded}.${payloadEncoded}`;
-  
-  // Import the private key
-  const keyData = pemToArrayBuffer(privateKeyPEM);
-  const key = await crypto.subtle.importKey(
-    'pkcs8',
-    keyData,
-    {
-      name: 'RSASSA-PKCS1-v1_5',
-      hash: 'SHA-256'
-    },
-    false,
-    ['sign']
-  );
-  
-  // Sign the message
-  const signature = await crypto.subtle.sign(
-    'RSASSA-PKCS1-v1_5',
-    key,
-    new TextEncoder().encode(message)
-  );
-  
-  const signatureEncoded = base64UrlEncode(signature);
-  return `${message}.${signatureEncoded}`;
-}
 
-// Verify GitHub user token and get user info
-async function verifyGitHubToken(token, env) {
-  const githubApi = env.GITHUB_API || 'https://api.github.com';
-  const url = `${githubApi}/user`;
-  
-  try {
-    const response = await fetch(url, {
-      headers: {
-        'Accept': 'application/vnd.github.v3+json',
-        'Authorization': `Bearer ${token}`,
-        'User-Agent': 'GitHub-App-Token-Broker'
-      }
-    });
-    
-    if (!response.ok) {
-      return null;
-    }
-    
-    const user = await response.json();
-    return user;
-  } catch (error) {
-    console.error('Failed to verify GitHub token:', error);
-    return null;
-  }
-}
 
-// Check if user has access to repository
-async function checkRepositoryAccess(token, owner, repo, env) {
-  const githubApi = env.GITHUB_API || 'https://api.github.com';
-  const url = `${githubApi}/repos/${owner}/${repo}`;
-  
-  try {
-    const response = await fetch(url, {
-      headers: {
-        'Accept': 'application/vnd.github.v3+json',
-        'Authorization': `Bearer ${token}`,
-        'User-Agent': 'GitHub-App-Token-Broker'
-      }
-    });
-    
-    if (!response.ok) {
-      return null;
-    }
-    
-    const repoData = await response.json();
-    
-    // Also get user's permissions for this repo
-    const permissionsUrl = `${githubApi}/repos/${owner}/${repo}/collaborators/permissions`;
-    const userUrl = `${githubApi}/user`;
-    
-    const userResponse = await fetch(userUrl, {
-      headers: {
-        'Accept': 'application/vnd.github.v3+json',
-        'Authorization': `Bearer ${token}`,
-        'User-Agent': 'GitHub-App-Token-Broker'
-      }
-    });
-    
-    if (!userResponse.ok) {
-      return null;
-    }
-    
-    const userData = await userResponse.json();
-    const username = userData.login;
-    
-    // Check user's permission level
-    const permUrl = `${githubApi}/repos/${owner}/${repo}/collaborators/${username}/permission`;
-    const permResponse = await fetch(permUrl, {
-      headers: {
-        'Accept': 'application/vnd.github.v3+json',
-        'Authorization': `Bearer ${token}`,
-        'User-Agent': 'GitHub-App-Token-Broker'
-      }
-    });
-    
-    if (permResponse.ok) {
-      const permData = await permResponse.json();
-      return {
-        repo: repoData,
-        permissions: permData.permission,
-        user: permData.user
-      };
-    }
-    
-    // For public repos, users might have read access without being a collaborator
-    if (!repoData.private) {
-      return {
-        repo: repoData,
-        permissions: 'read',
-        user: userData
-      };
-    }
-    
-    return null;
-  } catch (error) {
-    console.error('Failed to check repository access:', error);
-    return null;
-  }
-}
 
-// Get app installation permissions
-async function getAppInstallationPermissions(jwt, installationId, env) {
-  const githubApi = env.GITHUB_API || 'https://api.github.com';
-  const url = `${githubApi}/app/installations/${installationId}`;
-  
-  try {
-    const response = await fetch(url, {
-      headers: {
-        'Accept': 'application/vnd.github.v3+json',
-        'Authorization': `Bearer ${jwt}`,
-        'User-Agent': 'GitHub-App-Token-Broker'
-      }
-    });
-    
-    if (!response.ok) {
-      return null;
-    }
-    
-    const installation = await response.json();
-    return installation.permissions;
-  } catch (error) {
-    console.error('Failed to get app permissions:', error);
-    return null;
-  }
-}
 
-// Check if user permissions meet or exceed app permissions
-function validatePermissions(userPermission, appPermissions) {
-  // Permission hierarchy: admin > write > read
-  const permissionLevels = {
-    'admin': 3,
-    'write': 2,
-    'read': 1,
-    'none': 0
-  };
-  
-  const userLevel = permissionLevels[userPermission] || 0;
-  
-  // Check each app permission
-  for (const [resource, permission] of Object.entries(appPermissions || {})) {
-    const requiredLevel = permissionLevels[permission] || 0;
-    
-    // For repository-level permissions, check if user has sufficient access
-    if (resource === 'contents' || resource === 'pull_requests' || resource === 'issues') {
-      if (userLevel < requiredLevel) {
-        return {
-          valid: false,
-          error: `Insufficient permissions: app requires '${permission}' access to '${resource}', but user only has '${userPermission}' access to repository`
-        };
-      }
-    }
-  }
-  
-  return { valid: true };
-}
 
 // Make GitHub API request
 async function githubRequest(url, options = {}) {
@@ -301,135 +104,7 @@ async function githubRequest(url, options = {}) {
   return jsonBody;
 }
 
-// Get installation ID from owner/repo
-async function getInstallationId(env, owner, repo, jwt) {
-  const githubApi = env.GITHUB_API || 'https://api.github.com';
-  const url = `${githubApi}/repos/${owner}/${repo}/installation`;
-  
-  const data = await githubRequest(url, {
-    headers: {
-      'Authorization': `Bearer ${jwt}`
-    }
-  });
-  
-  return data.id;
-}
 
-// Handle /token endpoint
-async function handleToken(request, env, body, authenticatedUser = null) {
-  const { installation_id, owner, repo } = body;
-  
-  if (!installation_id && (!owner || !repo)) {
-    return new Response(JSON.stringify({
-      error: 'Either installation_id or {owner, repo} must be provided'
-    }), {
-      status: 400,
-      headers: { 'Content-Type': 'application/json' }
-    });
-  }
-  
-  // Create App JWT
-  const appId = env.GITHUB_APP_ID;
-  const privateKey = env.GITHUB_APP_PRIVATE_KEY;
-  
-  if (!appId || !privateKey) {
-    return new Response(JSON.stringify({
-      error: 'GitHub App configuration missing'
-    }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json' }
-    });
-  }
-  
-  // Use mock JWT in tests to bypass crypto issues
-  const jwt = env.__mockJWT || await createAppJWT(privateKey, appId);
-  
-  // Get installation ID if not provided
-  let installationId = installation_id;
-  if (!installationId) {
-    try {
-      installationId = await getInstallationId(env, owner, repo, jwt);
-    } catch (error) {
-      return new Response(JSON.stringify({
-        error: error.message,
-        details: error.body
-      }), {
-        status: error.status || 500,
-        headers: { 'Content-Type': 'application/json' }
-      });
-    }
-  }
-  
-  // If authenticated with GitHub user token, verify permissions
-  if (authenticatedUser) {
-    // Get app installation permissions
-    const appPermissions = await getAppInstallationPermissions(jwt, installationId, env);
-    if (!appPermissions) {
-      return new Response(JSON.stringify({
-        error: 'Failed to retrieve app installation permissions'
-      }), {
-        status: 500,
-        headers: { 'Content-Type': 'application/json' }
-      });
-    }
-    
-    // Validate user has sufficient permissions
-    const validation = validatePermissions(authenticatedUser.repoAccess.permissions, appPermissions);
-    if (!validation.valid) {
-      return new Response(JSON.stringify({
-        error: 'Permission denied',
-        details: validation.error,
-        user: authenticatedUser.user.login,
-        userPermission: authenticatedUser.repoAccess.permissions,
-        requiredPermissions: appPermissions
-      }), {
-        status: 403,
-        headers: { 'Content-Type': 'application/json' }
-      });
-    }
-    
-    console.log({
-      action: 'token_requested',
-      user: authenticatedUser.user.login,
-      repo: `${owner || authenticatedUser.repoAccess.repo.owner.login}/${repo || authenticatedUser.repoAccess.repo.name}`,
-      userPermission: authenticatedUser.repoAccess.permissions,
-      timestamp: new Date().toISOString()
-    });
-  }
-  
-  // Get installation token
-  const githubApi = env.GITHUB_API || 'https://api.github.com';
-  const url = `${githubApi}/app/installations/${installationId}/access_tokens`;
-  
-  try {
-    const tokenData = await githubRequest(url, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${jwt}`
-      }
-    });
-    
-    // Set expiration headers
-    const expiresAt = new Date(tokenData.expires_at);
-    
-    return new Response(JSON.stringify(tokenData), {
-      status: 201,
-      headers: {
-        'Content-Type': 'application/json',
-        'Cache-Control': 'no-store',
-        'Expires': expiresAt.toUTCString()
-      }
-    });
-  } catch (error) {
-    return new Response(JSON.stringify({
-      error: error.message,
-      details: error.body
-    }), {
-      status: error.status || 500,
-      headers: { 'Content-Type': 'application/json' }
-    });
-  }
-}
 
 // Handle /user-token/start endpoint
 async function handleUserTokenStart(request, env, body) {
@@ -629,6 +304,127 @@ async function handleUserTokenPoll(request, env, body) {
   }
 }
 
+// Handle /oauth/authorize endpoint - redirect to GitHub OAuth
+async function handleOAuthAuthorize(request, env, body) {
+  const { scopes, state, redirect_uri } = body;
+  const clientId = env.GITHUB_CLIENT_ID;
+  
+  if (!clientId) {
+    return new Response(JSON.stringify({
+      error: 'GitHub Client ID not configured'
+    }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
+  
+  // Build GitHub OAuth URL
+  const githubAuthUrl = new URL('https://github.com/login/oauth/authorize');
+  githubAuthUrl.searchParams.set('client_id', clientId);
+  githubAuthUrl.searchParams.set('response_type', 'code');
+  
+  if (scopes) {
+    githubAuthUrl.searchParams.set('scope', scopes);
+  }
+  
+  if (state) {
+    githubAuthUrl.searchParams.set('state', state);
+  }
+  
+  if (redirect_uri) {
+    githubAuthUrl.searchParams.set('redirect_uri', redirect_uri);
+  }
+  
+  return new Response(JSON.stringify({
+    authorization_url: githubAuthUrl.toString(),
+    message: 'Redirect user to authorization_url to complete OAuth flow'
+  }), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' }
+  });
+}
+
+// Handle /oauth/callback endpoint - exchange code for token
+async function handleOAuthCallback(request, env, body) {
+  const { code, state } = body;
+  const clientId = env.GITHUB_CLIENT_ID;
+  
+  if (!clientId) {
+    return new Response(JSON.stringify({
+      error: 'GitHub Client ID not configured'
+    }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
+  
+  if (!code) {
+    return new Response(JSON.stringify({
+      error: 'Authorization code is required'
+    }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
+  
+  const githubApi = env.GITHUB_API || 'https://api.github.com';
+  const url = `${githubApi}/login/oauth/access_token`;
+  
+  const params = new URLSearchParams({
+    client_id: clientId,
+    code: code,
+    grant_type: 'authorization_code'
+  });
+  
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Accept': 'application/json',
+        'Content-Type': 'application/x-www-form-urlencoded'
+      },
+      body: params.toString()
+    });
+    
+    const data = await response.json();
+    
+    if (data.error) {
+      return new Response(JSON.stringify({
+        error: data.error,
+        error_description: data.error_description
+      }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+    
+    // Calculate expiration
+    const expiresAt = new Date(Date.now() + (data.expires_in || 28800) * 1000).toISOString();
+    
+    return new Response(JSON.stringify({
+      access_token: data.access_token,
+      token_type: data.token_type,
+      expires_at: expiresAt,
+      scope: data.scope,
+      state: state
+    }), {
+      status: 200,
+      headers: {
+        'Content-Type': 'application/json',
+        'Cache-Control': 'no-store'
+      }
+    });
+  } catch (error) {
+    return new Response(JSON.stringify({
+      error: 'server_error',
+      error_description: error.message
+    }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
+}
+
 // Main request handler
 export default {
   async fetch(request, env, ctx) {
@@ -669,9 +465,10 @@ export default {
         timestamp: new Date().toISOString(),
         endpoints: {
           '/health': 'Health check (GET)',
-          '/token': 'Get installation token (POST)',
           '/user-token/start': 'Start device flow (POST)',
-          '/user-token/poll': 'Poll device flow (POST)'
+          '/user-token/poll': 'Poll device flow (POST)',
+          '/oauth/authorize': 'Start OAuth web flow (POST)',
+          '/oauth/callback': 'Complete OAuth web flow (POST)'
         }
       }), {
         status: 200,
@@ -697,96 +494,13 @@ export default {
     
     // Parse request body
     let body;
-    let authenticatedUser = null;
     
     try {
       const rawBody = await request.text();
       body = rawBody ? JSON.parse(rawBody) : {};
-      
-      // Check for GitHub token in Authorization header
-      const authHeader = request.headers.get('Authorization');
-      if (authHeader && authHeader.startsWith('Bearer ')) {
-        const githubToken = authHeader.substring(7);
-        
-        // Verify GitHub token
-        const user = await verifyGitHubToken(githubToken, env);
-        if (!user) {
-          return new Response(JSON.stringify({
-            error: 'Invalid GitHub token'
-          }), {
-            status: 401,
-            headers: {
-              ...securityHeaders,
-              'Content-Type': 'application/json'
-            }
-          });
-        }
-        
-        // For /token endpoint, check repository access
-        if (url.pathname === '/token') {
-          // Determine repository from request
-          let targetOwner = body.owner;
-          let targetRepo = body.repo;
-          
-          // If using installation_id, we need to get the repo info first
-          if (!targetOwner || !targetRepo) {
-            if (body.installation_id) {
-              // For now, require owner/repo when using user authentication
-              return new Response(JSON.stringify({
-                error: 'When using GitHub user authentication, owner and repo must be specified'
-              }), {
-                status: 400,
-                headers: {
-                  ...securityHeaders,
-                  'Content-Type': 'application/json'
-                }
-              });
-            }
-          }
-          
-          // Check user has access to the repository
-          const repoAccess = await checkRepositoryAccess(githubToken, targetOwner, targetRepo, env);
-          if (!repoAccess) {
-            return new Response(JSON.stringify({
-              error: 'Access denied',
-              details: `User does not have access to repository ${targetOwner}/${targetRepo}`
-            }), {
-              status: 403,
-              headers: {
-                ...securityHeaders,
-                'Content-Type': 'application/json'
-              }
-            });
-          }
-          
-          authenticatedUser = {
-            user,
-            repoAccess,
-            token: githubToken
-          };
-        } else {
-          // For non-token endpoints, just store user info
-          authenticatedUser = {
-            user,
-            token: githubToken
-          };
-        }
-      } else {
-        // No GitHub token provided
-        return new Response(JSON.stringify({
-          error: 'Authentication required. Use GitHub token in Authorization header.'
-        }), {
-          status: 401,
-          headers: {
-            ...securityHeaders,
-            'Content-Type': 'application/json',
-            'WWW-Authenticate': 'Bearer realm="GitHub App Token Broker"'
-          }
-        });
-      }
     } catch (error) {
       return new Response(JSON.stringify({
-        error: 'Invalid request body or authentication'
+        error: 'Invalid request body'
       }), {
         status: 400,
         headers: {
@@ -801,16 +515,20 @@ export default {
       let response;
       
       switch (url.pathname) {
-        case '/token':
-          response = await handleToken(request, env, body, authenticatedUser);
-          break;
-        
         case '/user-token/start':
           response = await handleUserTokenStart(request, env, body);
           break;
         
         case '/user-token/poll':
           response = await handleUserTokenPoll(request, env, body);
+          break;
+        
+        case '/oauth/authorize':
+          response = await handleOAuthAuthorize(request, env, body);
+          break;
+        
+        case '/oauth/callback':
+          response = await handleOAuthCallback(request, env, body);
           break;
         
         default:
