@@ -55,14 +55,23 @@ async function handleAuthStart(request, env) {
 async function handleAuthCallback(request, env) {
   const url = new URL(request.url);
   const code = url.searchParams.get('code');
-  const state = url.searchParams.get('state');
+  let state = url.searchParams.get('state');
+  const installationId = url.searchParams.get('installation_id');
+  const setupAction = url.searchParams.get('setup_action');
   
-  if (!code || !state) {
-    return new Response('Missing code or state', { status: 400 });
+  // Handle installation flow (no state, but has installation_id)
+  if (code && installationId && setupAction === 'install') {
+    // This is an installation flow callback
+    // For installation flow, we don't have a pre-existing state
+    state = `install-${installationId}`;
   }
   
-  // Verify state
-  if (env.AUTH_STATES) {
+  if (!code) {
+    return new Response('Missing code', { status: 400 });
+  }
+  
+  // For regular OAuth flow, verify state exists
+  if (!installationId && env.AUTH_STATES) {
     const stateData = await env.AUTH_STATES.get(state, 'json');
     if (!stateData) {
       return new Response('Invalid or expired state', { status: 400 });
