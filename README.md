@@ -1,5 +1,7 @@
 # GitHub App Token Broker for Cloudflare Workers
 
+![As-A-Bot Token Broker](./hero-image.png)
+
 A secure token broker service that manages GitHub App tokens, providing both installation tokens and user-to-server tokens via OAuth device flow.
 
 🌐 **Live at**: https://as-bot-worker.minivelos.workers.dev
