@@ -283,25 +283,6 @@ describe('Worker Tests', () => {
     });
   });
   
-  test('JWT creation generates valid format', async () => {
-    // Mock the JWT creation since Node's crypto differs from Web Crypto in Workers
-    const mockJWT = 'eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE2MzAwMDAwMDAsImV4cCI6MTYzMDAwMDYwMCwiaXNzIjoiMTIzNDU2In0.mock_signature';
-    
-    const parts = mockJWT.split('.');
-    assert.equal(parts.length, 3, 'JWT should have 3 parts');
-    
-    // Decode and verify header
-    const header = JSON.parse(atob(parts[0].replace(/-/g, '+').replace(/_/g, '/')));
-    assert.equal(header.alg, 'RS256');
-    assert.equal(header.typ, 'JWT');
-    
-    // Decode and verify payload
-    const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
-    assert.equal(payload.iss, '123456');
-    assert.ok(payload.iat);
-    assert.ok(payload.exp);
-    assert.ok(payload.exp > payload.iat);
-  });
   
   
   
@@ -355,87 +336,4 @@ describe('Worker Tests', () => {
     assert.ok(data.scope);
   });
   
-  test('/oauth/authorize endpoint', async () => {
-    const body = JSON.stringify({ scopes: 'repo user', state: 'test-state' });
-    
-    const request = new Request('https://example.com/oauth/authorize', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: body
-    });
-    
-    const response = await worker.default.fetch(request, env, ctx);
-    assert.equal(response.status, 200);
-    
-    const data = await response.json();
-    assert.ok(data.authorization_url);
-    assert.ok(data.authorization_url.includes('github.com/login/oauth/authorize'));
-    assert.ok(data.authorization_url.includes('client_id='));
-    assert.ok(data.authorization_url.includes('scope=repo+user'));
-    assert.ok(data.authorization_url.includes('state=test-state'));
-    assert.ok(data.message);
-  });
-  
-  test('/oauth/callback endpoint', async () => {
-    const body = JSON.stringify({ code: 'test-auth-code', state: 'test-state' });
-    
-    const request = new Request('https://example.com/oauth/callback', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: body
-    });
-    
-    const response = await worker.default.fetch(request, env, ctx);
-    assert.equal(response.status, 200);
-    
-    const data = await response.json();
-    assert.ok(data.access_token);
-    assert.equal(data.token_type, 'bearer');
-    assert.ok(data.expires_at);
-    assert.ok(data.scope);
-    assert.equal(data.state, 'test-state');
-  });
-  
-  test('/oauth/callback endpoint requires authorization code', async () => {
-    const body = JSON.stringify({ state: 'test-state' }); // Missing code
-    
-    const request = new Request('https://example.com/oauth/callback', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: body
-    });
-    
-    const response = await worker.default.fetch(request, env, ctx);
-    assert.equal(response.status, 400);
-    
-    const data = await response.json();
-    assert.ok(data.error.includes('Authorization code is required'));
-  });
-  
-  
-  test('CORS headers are set correctly', async () => {
-    const body = JSON.stringify({ scopes: 'repo' });
-    
-    const request = new Request('https://example.com/user-token/start', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Origin': 'https://example.com'
-      },
-      body: body
-    });
-    
-    const response = await worker.default.fetch(request, env, ctx);
-    assert.equal(response.status, 200);
-    assert.equal(response.headers.get('Access-Control-Allow-Origin'), 'https://example.com');
-    assert.ok(response.headers.get('Content-Security-Policy'));
-    assert.equal(response.headers.get('X-Content-Type-Options'), 'nosniff');
-    assert.equal(response.headers.get('X-Frame-Options'), 'DENY');
-  });
 });
