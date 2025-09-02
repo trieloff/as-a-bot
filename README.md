@@ -209,6 +209,22 @@ npm test
 }
 ```
 
+## Related Projects
+
+This project is part of a suite of tools designed to improve the AI coding agent experience on GitHub:
+
+### 🤖 AI Agent Tools
+
+- **[ai-aligned-git](https://github.com/trieloff/ai-aligned-git)** - Git wrapper that ensures AI agent commits are properly attributed with co-authorship
+- **[ai-aligned-gh](https://github.com/trieloff/ai-aligned-gh)** - Transparent GitHub CLI wrapper that automatically attributes AI-initiated actions to a bot acting on the user's behalf
+
+### 📊 Developer Tools
+
+- **[gh-workflow-peek](https://github.com/trieloff/gh-workflow-peek)** - GitHub CLI extension for intelligently filtering and highlighting errors in GitHub Actions workflow logs
+- **[vibe-coded-badge-action](https://github.com/trieloff/vibe-coded-badge-action)** - GitHub Action that analyzes your repository's git history to display the percentage of AI-generated commits
+
+Together, these tools create a transparent and accountable environment for AI-assisted development on GitHub.
+
 ## License
 
 Apache 2.0
