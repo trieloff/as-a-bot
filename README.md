@@ -136,19 +136,14 @@ GitHub API calls show proper user attribution
 
 ## Related Projects
 
-This project is part of a suite of tools designed to improve the AI coding agent experience on GitHub:
+Part of the **[AI Ecoverse](https://github.com/trieloff/ai-ecoverse)** - a comprehensive ecosystem of tools for AI-assisted development:
 
-### 🤖 AI Agent Tools
-
-- **[ai-aligned-git](https://github.com/trieloff/ai-aligned-git)** - Git wrapper that ensures AI agent commits are properly attributed with co-authorship
-- **[ai-aligned-gh](https://github.com/trieloff/ai-aligned-gh)** - Transparent GitHub CLI wrapper that automatically attributes AI-initiated actions to a bot acting on the user's behalf
-
-### 📊 Developer Tools
-
-- **[gh-workflow-peek](https://github.com/trieloff/gh-workflow-peek)** - GitHub CLI extension for intelligently filtering and highlighting errors in GitHub Actions workflow logs
-- **[vibe-coded-badge-action](https://github.com/trieloff/vibe-coded-badge-action)** - GitHub Action that analyzes your repository's git history to display the percentage of AI-generated commits
-
-Together, these tools create a transparent and accountable environment for AI-assisted development on GitHub.
+- **[yolo](https://github.com/trieloff/yolo)** - AI CLI launcher with worktree isolation
+- **[ai-aligned-git](https://github.com/trieloff/ai-aligned-git)** - Git wrapper for safe AI commit practices
+- **[ai-aligned-gh](https://github.com/trieloff/ai-aligned-gh)** - GitHub CLI wrapper for proper AI attribution
+- **[vibe-coded-badge-action](https://github.com/trieloff/vibe-coded-badge-action)** - Badge showing AI-generated code percentage
+- **[gh-workflow-peek](https://github.com/trieloff/gh-workflow-peek)** - Smarter GitHub Actions log filtering
+- **[upskill](https://github.com/trieloff/upskill)** - Install Claude/Agent skills from other repositories
 
 ## 📄 License
 
