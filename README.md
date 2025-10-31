@@ -1,5 +1,7 @@
 # GitHub App Token Broker for ai-aligned-gh
 
+[![Vibe_Coded](https://img.shields.io/badge/Vibe_Coded-ff69b4?style=for-the-badge&logo=claude&logoColor=white)](https://github.com/trieloff/vibe-coded-badge-action)
+
 A minimal Cloudflare Worker that provides user-to-server GitHub tokens via device flow for `ai-aligned-gh`. 
 
 **Key Feature**: Actions appear as the user (with app badge), not as "app/as-a-bot".
